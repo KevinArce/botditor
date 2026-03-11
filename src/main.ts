@@ -1,9 +1,87 @@
 import { Devvit, type FormField } from "@devvit/public-api";
 
 import { handleNuke, handleNukePost } from "./nuke.js";
+import { handleCommentSubmit } from "./commentIngestion.js";
+import {
+  addUserToAllowlist,
+  removeUserFromAllowlist,
+  isUserAllowlisted,
+} from "./allowlist.js";
+
+// Register all app settings (must be imported before Devvit.configure)
+import "./settings.js";
 
 Devvit.configure({
   redditAPI: true,
+  redis: true,
+  http: true,
+});
+
+// ---------------------------------------------------------------------------
+// Story 01 – Comment Ingestion Trigger
+// ---------------------------------------------------------------------------
+
+Devvit.addTrigger({
+  event: "CommentSubmit",
+  onEvent: async (event, context) => {
+    try {
+      await handleCommentSubmit(event, context);
+    } catch (err) {
+      // Top-level safety net: never let one comment crash the trigger for others
+      console.error(
+        `[trigger] Unhandled error in CommentSubmit handler:`,
+        err
+      );
+    }
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Story 23 (partial) – Allowlist Menu Actions
+// ---------------------------------------------------------------------------
+
+Devvit.addMenuItem({
+  label: "Add author to allowlist",
+  description: "Allow-list this comment's author so their comments skip analysis.",
+  location: "comment",
+  forUserType: "moderator",
+  onPress: async (event, context) => {
+    if (!event.targetId) {
+      context.ui.showToast("Could not determine comment.");
+      return;
+    }
+    try {
+      const comment = await context.reddit.getCommentById(event.targetId);
+      const author = comment.authorName;
+      await addUserToAllowlist(author, context.redis);
+      context.ui.showToast(`u/${author} added to allowlist.`);
+    } catch (err) {
+      console.error("[allowlist] Failed to add user:", err);
+      context.ui.showToast("Failed to add user to allowlist.");
+    }
+  },
+});
+
+Devvit.addMenuItem({
+  label: "Remove author from allowlist",
+  description: "Remove this comment's author from the allowlist.",
+  location: "comment",
+  forUserType: "moderator",
+  onPress: async (event, context) => {
+    if (!event.targetId) {
+      context.ui.showToast("Could not determine comment.");
+      return;
+    }
+    try {
+      const comment = await context.reddit.getCommentById(event.targetId);
+      const author = comment.authorName;
+      await removeUserFromAllowlist(author, context.redis);
+      context.ui.showToast(`u/${author} removed from allowlist.`);
+    } catch (err) {
+      console.error("[allowlist] Failed to remove user:", err);
+      context.ui.showToast("Failed to remove user from allowlist.");
+    }
+  },
 });
 
 const nukeFields: FormField[] = [

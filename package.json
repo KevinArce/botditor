@@ -9,14 +9,18 @@
     "dev": "dotenv -e .env -- devvit playtest",
     "login": "devvit login",
     "launch": "devvit publish",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "type-check": "tsc --build"
   },
   "dependencies": {
     "@devvit/public-api": "0.12.14"
   },
   "devDependencies": {
+    "@devvit/test": "^0.12.14",
     "devvit": "1.0.0",
     "dotenv-cli": "8.0.0",
-    "typescript": "5.8.3"
+    "typescript": "5.8.3",
+    "vitest": "^4.0.18"
   }
 }
