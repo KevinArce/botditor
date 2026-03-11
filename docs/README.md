@@ -3,8 +3,8 @@
 > See [BACKLOG.md](./BACKLOG.md) for the refined backlog with changelog, groupings, and dependency map.
 
 ## Core Moderation
-- [story-01-comment-ingestion.md](./story-01-comment-ingestion.md) — ✅ Keep & Enrich
-- [story-23-configurable-allowlist.md](./story-23-configurable-allowlist.md) — 🆕 New
+- [story-01-comment-ingestion.md](./story-01-comment-ingestion.md) — 🚀 Implemented
+- [story-23-configurable-allowlist.md](./story-23-configurable-allowlist.md) — 🚀 Partially Implemented (allowlist service + menu actions)
 - [story-06-auto-moderation-rules.md](./story-06-auto-moderation-rules.md) — ✅ Keep & Enrich
 - [story-03-toxicity-detection.md](./story-03-toxicity-detection.md) — ✅ Keep & Enrich
 - [story-04-spam-detection.md](./story-04-spam-detection.md) — ✅ Keep & Enrich

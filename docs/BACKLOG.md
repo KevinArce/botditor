@@ -8,10 +8,14 @@
 
 ## Changelog
 
+### Implemented (🚀)
+| Story | Notes |
+|-------|-------|
+| Story 01 — Comment Ingestion | Fully implemented. `CommentSubmit` trigger, enabled toggle, allowlist guard, self-comment guard, Redis persistence with duplicate detection, sanitization, and Story 02 dispatch stub. Also delivers partial Story 23 (allowlist service + menu actions). |
+
 ### Kept & Enriched (✅)
 | Story | Change |
 |-------|--------|
-| Story 01 — Comment Ingestion | Added specific `CommentSubmit` trigger hook, bot self-analysis guard, allow-list check, and edge cases for deleted comments and viral posts. |
 | Story 02 — AI Analysis Pipeline | Specified `context.fetch()` + Gemini REST API, structured JSON response schema, schema validation, caching in `kvStore`, and full Gemini prompt template. |
 | Story 03 — Toxicity Detection | Clarified three-threshold action model (remove / flag / ignore), `modLog` integration, dry-run reference, and edge cases for overrides and concurrent deletions. |
 | Story 04 — Spam Detection | Expanded rule-based heuristics with concrete scoring deltas, combined with AI score for ambiguous cases, added domain block-list and account-age signals. |
@@ -54,8 +58,8 @@ _No stories were fully cut._ Story 18's original "copyable alert summary only" s
 
 | ID | Story | Status | Feasibility |
 |----|-------|--------|-------------|
-| 01 | Comment Ingestion | ✅ Keep & Enrich | High |
-| 23 | Configurable Allow-list | 🆕 New | High |
+| 01 | Comment Ingestion | 🚀 Implemented | High |
+| 23 | Configurable Allow-list | 🚀 Partially Implemented | High |
 | 06 | Auto-Moderation Rules | ✅ Keep & Enrich | High |
 | 03 | Toxicity Detection | ✅ Keep & Enrich | High |
 | 04 | Spam Detection | ✅ Keep & Enrich | High |
