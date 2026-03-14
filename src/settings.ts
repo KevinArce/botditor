@@ -36,6 +36,33 @@ Devvit.addSettings([
     defaultValue: "",
     scope: SettingScope.Installation,
   },
+  {
+    type: "number",
+    name: SETTINGS.TOXICITY_REMOVE_THRESHOLD,
+    label: "Toxicity auto-remove threshold",
+    helpText:
+      "Comments with a toxicity score at or above this value are automatically removed. Set to 1.0 to disable auto-removal.",
+    defaultValue: 0.85,
+    scope: SettingScope.Installation,
+  },
+  {
+    type: "number",
+    name: SETTINGS.TOXICITY_FLAG_THRESHOLD,
+    label: "Toxicity flag-for-review threshold",
+    helpText:
+      "Comments with a toxicity score at or above this value (but below the remove threshold) are reported for manual review.",
+    defaultValue: 0.60,
+    scope: SettingScope.Installation,
+  },
+  {
+    type: "boolean",
+    name: SETTINGS.DRY_RUN,
+    label: "Dry-run mode",
+    helpText:
+      "When enabled, moderation actions are logged but not executed. Useful for tuning thresholds.",
+    defaultValue: false,
+    scope: SettingScope.Installation,
+  },
 
   // ── Global (developer) settings ───────────────────────────────────
   {

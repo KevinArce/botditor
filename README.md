@@ -6,7 +6,8 @@ Ever wondered if that comment was written by a human or a slightly sentient toas
 ✅ Detect toxic comments before they ruin the vibe 😡☠️  
 ✅ Identify spam faster than you can say "HODL 🚀"  
 ✅ Spot potential bots trying to infiltrate your wholesome discussions 🤖  
-✅ Auto-moderate based on customizable rules ⚡  
+✅ Auto-remove or flag toxic comments based on configurable thresholds ⚡  
+✅ Dry-run mode to tune moderation without affecting real content 🧪  
 ✅ Allow moderators to bulk-remove comment trees ("Mop" 🧹)  
 
 ---
@@ -14,8 +15,10 @@ Ever wondered if that comment was written by a human or a slightly sentient toas
 ## 🎯 How It Works
 1. **Comment Ingestion** – Listens for `CommentSubmit` events and validates each comment against guards (enabled toggle, allowlist, self-comment, deletion, duplicates). 👂
 2. **AI Analysis** – Sends the comment body to the Gemini API for structured scoring: toxicity, spam, bot-likelihood, and sentiment. 🧠
-3. **Safe by Default** – If the AI call fails (no key, network error, bad response), all scores default to zero — no moderation action is taken. 🛡️
-4. **Caching** – Results are cached in Redis for 1 hour to avoid redundant API calls on event re-deliveries. ⚡
+3. **Toxicity Enforcement** – Compares the toxicity score against configurable thresholds to auto-remove, flag for review, or take no action. 🚨
+4. **Safe by Default** – If the AI call fails (no key, network error, bad response), all scores default to zero — no moderation action is taken. 🛡️
+5. **Dry-Run Mode** – Moderators can enable dry-run to see what actions *would* be taken without executing them. 🧪
+6. **Caching** – Results are cached in Redis for 1 hour to avoid redundant API calls on event re-deliveries. ⚡
 
 ---
 
@@ -67,6 +70,9 @@ After installing the app on a subreddit, moderators can configure these from the
 | **Enable Botditor** | Master on/off toggle. When disabled, comments are received but not analyzed. | `true` |
 | **Allowlisted usernames** | Comma-separated usernames whose comments always skip analysis. | (empty) |
 | **Allowlisted domains** | Comma-separated domains that won't trigger spam heuristics. | (empty) |
+| **Toxicity auto-remove threshold** | Comments scored at or above this value are automatically removed. Set to `1.0` to disable. | `0.85` |
+| **Toxicity flag-for-review threshold** | Comments scored at or above this (but below remove) are reported for mod review. | `0.60` |
+| **Dry-run mode** | Log moderation actions without executing them. Great for threshold tuning. | `false` |
 
 ### 6️⃣ Run Locally (Playtest)
 
@@ -104,6 +110,7 @@ npm run type-check     # TypeScript type checking
 src/
 ├── main.ts              # App entry point – triggers, menus, forms
 ├── ai.ts                # AI analysis pipeline (Gemini API)
+├── moderation.ts        # Toxicity enforcement (remove/flag/dry-run)
 ├── commentIngestion.ts  # Comment ingestion handler
 ├── commentStorage.ts    # Redis persistence layer
 ├── allowlist.ts         # User allowlist management
@@ -127,9 +134,9 @@ src/
 ---
 
 ## 🚀 Future Features
-🔜 Auto-moderation rules engine based on AI scores (Story 06)  
+🔜 Spam & bot detection enforcement (Stories 04–05)  
 🔜 Sentiment tracking dashboard 📈  
-🔜 Configurable score thresholds for auto-remove/flag actions  
+🔜 Warning messages for borderline comments  
 
 ---
 

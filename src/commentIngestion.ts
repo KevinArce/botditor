@@ -18,6 +18,7 @@ import type { TriggerContext } from "@devvit/public-api";
 import { isUserAllowlisted } from "./allowlist.js";
 import { saveComment, updateCommentStatus } from "./commentStorage.js";
 import { analyzeComment } from "./ai.js";
+import { enforceToxicity } from "./moderation.js";
 import type { IngestedComment, SkipReason } from "./types.js";
 import { SETTINGS, MAX_BODY_LENGTH } from "./types.js";
 import type { RedisClient } from "@devvit/public-api";
@@ -158,8 +159,17 @@ export async function handleCommentSubmit(
       { status: "analyzed", analysis },
       redis
     );
+
+    // ── 9. Enforce toxicity thresholds (Story 03) ──────────────────
+    const action = await enforceToxicity(record, analysis, context);
+    await updateCommentStatus(
+      commentId,
+      { moderationAction: action },
+      redis
+    );
+
     console.log(
-      `[ingestion] Comment ${commentId} analyzed (toxicity=${analysis.toxicityScore})`
+      `[ingestion] Comment ${commentId} analyzed (toxicity=${analysis.toxicityScore}) → action=${action}`
     );
   } catch (err) {
     console.error(

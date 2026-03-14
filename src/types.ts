@@ -31,6 +31,18 @@ export const ANALYSIS_FALLBACK: AnalysisResult = {
 };
 
 // ---------------------------------------------------------------------------
+// Moderation actions (produced by Story 03 – Toxicity Detection)
+// ---------------------------------------------------------------------------
+
+/** Action taken (or that would be taken in dry-run) on a comment. */
+export type ModerationAction =
+  | "removed"        // Auto-removed due to high toxicity
+  | "flagged"        // Reported for manual review
+  | "none"           // Below thresholds or error — no action
+  | "dry_run_remove" // Would remove, but dry-run is on
+  | "dry_run_flag";  // Would flag, but dry-run is on
+
+// ---------------------------------------------------------------------------
 // Ingested comment record
 // ---------------------------------------------------------------------------
 
@@ -73,6 +85,8 @@ export interface IngestedComment {
   skipReason?: SkipReason;
   /** Analysis result (populated after Story 02 pipeline completes). */
   analysis?: AnalysisResult;
+  /** Moderation action taken after analysis (Story 03). */
+  moderationAction?: ModerationAction;
   /** Error message if status is "error". */
   errorMessage?: string;
 }
@@ -92,6 +106,12 @@ export const SETTINGS = {
   ALLOWLIST_USERNAMES: "allowlistUsernames",
   /** Comma-separated allowlisted domains. */
   ALLOWLIST_DOMAINS: "allowlistDomains",
+  /** Toxicity score above which comments are auto-removed (Story 03). */
+  TOXICITY_REMOVE_THRESHOLD: "toxicityRemoveThreshold",
+  /** Toxicity score above which comments are flagged for review (Story 03). */
+  TOXICITY_FLAG_THRESHOLD: "toxicityFlagThreshold",
+  /** When true, log moderation actions without executing them (Story 03/07). */
+  DRY_RUN: "dryRunMode",
 } as const;
 
 // ---------------------------------------------------------------------------

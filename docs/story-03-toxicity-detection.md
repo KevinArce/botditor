@@ -1,8 +1,16 @@
 # Story 03: Toxicity Detection
 
-Status: ✅ Keep & Enrich
+Status: ✅ Implemented
 
 Feature area: Core Moderation
+
+Implementation notes:
+- Enforcement logic in `src/moderation.ts` with `enforceToxicity()` entry point.
+- Three configurable per-installation settings: `toxicityRemoveThreshold` (0.85), `toxicityFlagThreshold` (0.60), `dryRunMode` (false).
+- Auto-remove uses `comment.remove()`, flagging uses `context.reddit.report()`.
+- Dry-run mode logs actions without executing — useful for threshold tuning.
+- All errors return `"none"` — fail safe, never throws.
+- Comment already deleted (404) is handled gracefully.
 
 Story:
 As a moderator, I want toxic comments detected and acted upon automatically so that harmful content is handled quickly and consistently.

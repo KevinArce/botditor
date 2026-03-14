@@ -65,7 +65,7 @@ export async function getComment(
  */
 export async function updateCommentStatus(
   commentId: string,
-  updates: Partial<Pick<IngestedComment, "status" | "analysis" | "errorMessage" | "skipReason">>,
+  updates: Partial<Pick<IngestedComment, "status" | "analysis" | "errorMessage" | "skipReason" | "moderationAction">>,
   redis: RedisClient
 ): Promise<boolean> {
   const key = REDIS_KEYS.comment(commentId);
