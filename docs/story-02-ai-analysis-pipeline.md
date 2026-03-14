@@ -1,14 +1,23 @@
 # Story 02: AI Analysis Pipeline
 
-Status: ✅ Keep & Enrich
+Status: ✅ Implemented
 
 Feature area: Core Moderation
+
+Implementation notes:
+- Pipeline implemented in `src/ai.ts` with `analyzeComment()` entry point.
+- Uses global `fetch()` (Devvit `http: true` config) to call the Gemini REST API.
+- Default model: `gemini-2.5-flash` (configurable via `devvit settings set geminiModel`).
+- API key stored as encrypted Devvit App Setting (`devvit settings set geminiApiKey`).
+- Results cached in Redis for 1 hour (`analysis:cache:{commentId}`).
+- All errors return safe fallback scores (all zeros) — no moderation action on failure.
+- `maxOutputTokens` set to 2048 to account for Gemini 2.5 thinking tokens.
 
 Story:
 As a moderator, I want comments analyzed by the Gemini API so that moderation signals are more accurate than simple keyword rules.
 
 Acceptance criteria:
-- The app calls the Gemini API (`gemini-1.5-flash` or configurable model) for each comment via `context.fetch()`.
+- The app calls the Gemini API (`gemini-2.5-flash` or configurable model) for each comment via `context.fetch()`.
 - The Gemini API key is stored in Devvit App Settings (encrypted at rest) and never committed to source control.
 - The prompt requests a structured JSON response containing `toxicityScore` (0–1), `spamScore` (0–1), `botLikelihood` (0–1), `sentiment` (`positive` | `neutral` | `negative`), and a short `reason` string.
 - Responses are validated against the expected schema; malformed responses fall back to `{ toxicityScore: 0, spamScore: 0, botLikelihood: 0, sentiment: 'neutral', reason: 'parse error' }`.

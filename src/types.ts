@@ -110,7 +110,15 @@ export const REDIS_KEYS = {
   /** Counter of total comments ingested per subreddit. */
   commentCount: (subredditName: string) =>
     `comments:count:${subredditName.toLowerCase()}`,
+  /** Cached AI analysis result for a comment (Story 02). */
+  analysisCache: (commentId: string) => `analysis:cache:${commentId}`,
 } as const;
 
 /** Maximum body length stored in Redis to keep record sizes reasonable. */
 export const MAX_BODY_LENGTH = 4000;
+
+/** Maximum body length sent to the Gemini prompt (Story 02). */
+export const MAX_PROMPT_BODY_LENGTH = 8000;
+
+/** Cache TTL for analysis results — 1 hour in milliseconds (Story 02). */
+export const ANALYSIS_CACHE_TTL_MS = 3_600_000;

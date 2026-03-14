@@ -127,7 +127,7 @@ function getStoredComment(redis: ReturnType<typeof createMockRedis>, commentId: 
 describe("commentIngestion – handleCommentSubmit", () => {
   // ── Happy path ────────────────────────────────────────────────────
 
-  it("processes a normal comment and saves it as 'processing'", async () => {
+  it("processes a normal comment and saves it as 'analyzed'", async () => {
     const redis = createMockRedis();
     const context = createMockContext({ redis });
     const event = makeEvent();
@@ -136,9 +136,12 @@ describe("commentIngestion – handleCommentSubmit", () => {
 
     const stored = getStoredComment(redis, "t1_test123");
     expect(stored).not.toBeNull();
-    expect(stored.status).toBe("processing");
+    expect(stored.status).toBe("analyzed");
     expect(stored.authorName).toBe("RegularUser");
     expect(stored.body).toBe("This is a test comment");
+    // No API key in mock settings → safe fallback scores
+    expect(stored.analysis).toBeDefined();
+    expect(stored.analysis.toxicityScore).toBe(0);
   });
 
   // ── Disabled toggle ───────────────────────────────────────────────
@@ -316,6 +319,6 @@ describe("commentIngestion – handleCommentSubmit", () => {
 
     const stored = getStoredComment(redis, "t1_test123");
     expect(stored).not.toBeNull();
-    expect(stored.status).toBe("processing");
+    expect(stored.status).toBe("analyzed");
   });
 });

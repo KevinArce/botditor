@@ -3,7 +3,7 @@
  *
  * Receives CommentSubmit events, validates the payload, checks guards
  * (enabled toggle, allowlist, self-comment, deletion), persists the record,
- * and dispatches to the AI analysis pipeline (Story 02 stub).
+ * and dispatches to the AI analysis pipeline (Story 02).
  *
  * Design decisions:
  *   • Each comment is processed independently – one slow/failed AI call never
@@ -17,6 +17,7 @@ import type { CommentSubmit } from "@devvit/protos";
 import type { TriggerContext } from "@devvit/public-api";
 import { isUserAllowlisted } from "./allowlist.js";
 import { saveComment, updateCommentStatus } from "./commentStorage.js";
+import { analyzeComment } from "./ai.js";
 import type { IngestedComment, SkipReason } from "./types.js";
 import { SETTINGS, MAX_BODY_LENGTH } from "./types.js";
 import type { RedisClient } from "@devvit/public-api";
@@ -148,14 +149,17 @@ export async function handleCommentSubmit(
     return;
   }
 
-  // ── 8. Dispatch to AI analysis pipeline (Story 02 stub) ─────────
+  // ── 8. Dispatch to AI analysis pipeline (Story 02) ───────────────
   try {
     await updateCommentStatus(commentId, { status: "processing" }, redis);
-    // TODO: Story 02 — call analyzeComment(record, context) here.
-    // For now we leave the status as "processing"; the pipeline will
-    // flip it to "analyzed" once implemented.
+    const analysis = await analyzeComment(record, context);
+    await updateCommentStatus(
+      commentId,
+      { status: "analyzed", analysis },
+      redis
+    );
     console.log(
-      `[ingestion] Comment ${commentId} saved & queued for analysis`
+      `[ingestion] Comment ${commentId} analyzed (toxicity=${analysis.toxicityScore})`
     );
   } catch (err) {
     console.error(
