@@ -18,8 +18,9 @@ import type { TriggerContext } from "@devvit/public-api";
 import { isUserAllowlisted } from "./allowlist.js";
 import { saveComment, updateCommentStatus } from "./commentStorage.js";
 import { analyzeComment } from "./ai.js";
-import { enforceToxicity } from "./moderation.js";
-import type { IngestedComment, SkipReason } from "./types.js";
+import { enforceToxicity, enforceSpam } from "./moderation.js";
+import { computeSpamScore } from "./spam.js";
+import type { IngestedComment, SkipReason, ModerationAction } from "./types.js";
 import { SETTINGS, MAX_BODY_LENGTH } from "./types.js";
 import type { RedisClient } from "@devvit/public-api";
 
@@ -154,6 +155,15 @@ export async function handleCommentSubmit(
   try {
     await updateCommentStatus(commentId, { status: "processing" }, redis);
     const analysis = await analyzeComment(record, context);
+
+    // ── 8b. Compute rule-based spam score (Story 04) ────────────────
+    const spamResult = await computeSpamScore(body, authorName, context);
+
+    // Merge: if rule-based score ≥ 0.5, override the AI spam score
+    if (spamResult.score >= 0.5) {
+      analysis.spamScore = spamResult.score;
+    }
+
     await updateCommentStatus(
       commentId,
       { status: "analyzed", analysis },
@@ -161,15 +171,31 @@ export async function handleCommentSubmit(
     );
 
     // ── 9. Enforce toxicity thresholds (Story 03) ──────────────────
-    const action = await enforceToxicity(record, analysis, context);
+    const toxAction = await enforceToxicity(record, analysis, context);
     await updateCommentStatus(
       commentId,
-      { moderationAction: action },
+      { moderationAction: toxAction },
       redis
     );
 
+    // ── 10. Enforce spam thresholds (Story 04) ─────────────────────
+    // Skip spam enforcement if toxicity already removed the comment
+    let spamAction: ModerationAction = "none";
+    if (toxAction !== "removed") {
+      spamAction = await enforceSpam(record, spamResult, context);
+      if (spamAction !== "none") {
+        await updateCommentStatus(
+          commentId,
+          { moderationAction: spamAction },
+          redis
+        );
+      }
+    }
+
     console.log(
-      `[ingestion] Comment ${commentId} analyzed (toxicity=${analysis.toxicityScore}) → action=${action}`
+      `[ingestion] Comment ${commentId} analyzed ` +
+      `(toxicity=${analysis.toxicityScore}, spam=${analysis.spamScore}) ` +
+      `→ toxAction=${toxAction}, spamAction=${spamAction}`
     );
   } catch (err) {
     console.error(

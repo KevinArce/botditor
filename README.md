@@ -15,10 +15,12 @@ Ever wondered if that comment was written by a human or a slightly sentient toas
 ## 🎯 How It Works
 1. **Comment Ingestion** – Listens for `CommentSubmit` events and validates each comment against guards (enabled toggle, allowlist, self-comment, deletion, duplicates). 👂
 2. **AI Analysis** – Sends the comment body to the Gemini API for structured scoring: toxicity, spam, bot-likelihood, and sentiment. 🧠
-3. **Toxicity Enforcement** – Compares the toxicity score against configurable thresholds to auto-remove, flag for review, or take no action. 🚨
-4. **Safe by Default** – If the AI call fails (no key, network error, bad response), all scores default to zero — no moderation action is taken. 🛡️
-5. **Dry-Run Mode** – Moderators can enable dry-run to see what actions *would* be taken without executing them. 🧪
-6. **Caching** – Results are cached in Redis for 1 hour to avoid redundant API calls on event re-deliveries. ⚡
+3. **Spam Detection** – Rule-based heuristics score the comment for spam (URL count, blocked domains, repeated body, new account). Fast, no API cost. If the rule-based score ≥ 0.5 it overrides the AI spam score. 🕵️
+4. **Toxicity Enforcement** – Compares the toxicity score against configurable thresholds to auto-remove, flag for review, or take no action. 🚨
+5. **Spam Enforcement** – Compares the spam score against configurable thresholds. Default mode is flag-only; can be switched to auto-remove. Blocked domains trigger instant removal. 🚫
+6. **Safe by Default** – If the AI call fails (no key, network error, bad response), all scores default to zero — no moderation action is taken. 🛡️
+7. **Dry-Run Mode** – Moderators can enable dry-run to see what actions *would* be taken without executing them. 🧪
+8. **Caching** – Results are cached in Redis for 1 hour to avoid redundant API calls on event re-deliveries. ⚡
 
 ---
 
@@ -72,6 +74,10 @@ After installing the app on a subreddit, moderators can configure these from the
 | **Allowlisted domains** | Comma-separated domains that won't trigger spam heuristics. | (empty) |
 | **Toxicity auto-remove threshold** | Comments scored at or above this value are automatically removed. Set to `1.0` to disable. | `0.85` |
 | **Toxicity flag-for-review threshold** | Comments scored at or above this (but below remove) are reported for mod review. | `0.60` |
+| **Spam auto-remove threshold** | Spam score at or above triggers removal (only in `remove` mode). | `0.80` |
+| **Spam flag-for-review threshold** | Spam score at or above triggers a report for manual review. | `0.50` |
+| **Spam enforcement mode** | `flag` (default, report only) or `remove` (auto-remove above threshold). | `flag` |
+| **Blocked domains** | Comma-separated domains that trigger instant spam removal (score = 1.0). | (empty) |
 | **Dry-run mode** | Log moderation actions without executing them. Great for threshold tuning. | `false` |
 
 ### 6️⃣ Run Locally (Playtest)
@@ -110,7 +116,8 @@ npm run type-check     # TypeScript type checking
 src/
 ├── main.ts              # App entry point – triggers, menus, forms
 ├── ai.ts                # AI analysis pipeline (Gemini API)
-├── moderation.ts        # Toxicity enforcement (remove/flag/dry-run)
+├── spam.ts              # Rule-based spam scoring (Story 04)
+├── moderation.ts        # Toxicity & spam enforcement (remove/flag/dry-run)
 ├── commentIngestion.ts  # Comment ingestion handler
 ├── commentStorage.ts    # Redis persistence layer
 ├── allowlist.ts         # User allowlist management
@@ -134,7 +141,7 @@ src/
 ---
 
 ## 🚀 Future Features
-🔜 Spam & bot detection enforcement (Stories 04–05)  
+🔜 Bot detection enforcement (Story 05)  
 🔜 Sentiment tracking dashboard 📈  
 🔜 Warning messages for borderline comments  
 

@@ -12,7 +12,7 @@
  * any real actions. On any error the function returns "none" — fail safe.
  */
 import type { TriggerContext } from "@devvit/public-api";
-import type { AnalysisResult, ModerationAction, IngestedComment } from "./types.js";
+import type { AnalysisResult, ModerationAction, IngestedComment, SpamResult } from "./types.js";
 import { SETTINGS } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -164,4 +164,102 @@ async function flagComment(
   }
 
   return "flagged";
+}
+
+// ---------------------------------------------------------------------------
+// Spam enforcement – Story 04
+// ---------------------------------------------------------------------------
+
+/**
+ * Evaluate the spam score and take the appropriate moderation action.
+ *
+ * Respects the `spamMode` setting:
+ *   • "flag" (default): always report, never remove.
+ *   • "remove": remove when score ≥ removeThreshold, flag when ≥ flagThreshold.
+ *
+ * Blocked-domain hits (`blockedDomain = true`) are always removed regardless
+ * of mode — this is the instant-removal escape hatch from the story spec.
+ *
+ * Always returns a valid `ModerationAction`. On any error returns `"none"`.
+ */
+export async function enforceSpam(
+  record: IngestedComment,
+  spamResult: SpamResult,
+  context: TriggerContext
+): Promise<ModerationAction> {
+  try {
+    return await enforceSpamInner(record, spamResult, context);
+  } catch (err) {
+    console.error(
+      `[moderation] Unexpected error enforcing spam for ${record.commentId}:`,
+      err instanceof Error ? err.message : err
+    );
+    return "none";
+  }
+}
+
+async function enforceSpamInner(
+  record: IngestedComment,
+  spamResult: SpamResult,
+  context: TriggerContext
+): Promise<ModerationAction> {
+  const { settings } = context;
+
+  const removeThreshold =
+    (await settings.get<number>(SETTINGS.SPAM_REMOVE_THRESHOLD)) ?? 0.80;
+  const flagThreshold =
+    (await settings.get<number>(SETTINGS.SPAM_FLAG_THRESHOLD)) ?? 0.50;
+  const spamMode =
+    (await settings.get<string>(SETTINGS.SPAM_MODE)) ?? "flag";
+  const dryRun =
+    (await settings.get<boolean>(SETTINGS.DRY_RUN)) ?? false;
+
+  const { score, reasons, blockedDomain } = spamResult;
+  const reasonStr = reasons.join("; ") || "spam heuristics";
+
+  // ── Blocked domain → always remove ────────────────────────────────
+  if (blockedDomain) {
+    if (dryRun) {
+      console.log(
+        `[moderation] DRY RUN: Would spam-remove comment ${record.commentId} ` +
+        `(blocked domain, score=${score}, reason="${reasonStr}")`
+      );
+      return "dry_run_spam_remove";
+    }
+    const result = await removeComment(record, `Spam: ${reasonStr}`, context);
+    return result === "removed" ? "spam_removed" : "none";
+  }
+
+  // ── Remove mode ───────────────────────────────────────────────────
+  if (spamMode === "remove" && score >= removeThreshold) {
+    if (dryRun) {
+      console.log(
+        `[moderation] DRY RUN: Would spam-remove comment ${record.commentId} ` +
+        `(score=${score}, threshold=${removeThreshold}, reason="${reasonStr}")`
+      );
+      return "dry_run_spam_remove";
+    }
+    const result = await removeComment(record, `Spam: ${reasonStr}`, context);
+    return result === "removed" ? "spam_removed" : "none";
+  }
+
+  // ── Flag (flag-mode default, or remove-mode below remove threshold) ─
+  if (score >= flagThreshold) {
+    if (dryRun) {
+      console.log(
+        `[moderation] DRY RUN: Would spam-flag comment ${record.commentId} ` +
+        `(score=${score}, threshold=${flagThreshold}, reason="${reasonStr}")`
+      );
+      return "dry_run_spam_flag";
+    }
+    const result = await flagComment(record, `Spam: ${reasonStr}`, context);
+    return result === "flagged" ? "spam_flagged" : "none";
+  }
+
+  // Below both thresholds — no action
+  console.log(
+    `[moderation] No spam action for comment ${record.commentId} ` +
+    `(score=${score}, flagAt=${flagThreshold}, removeAt=${removeThreshold})`
+  );
+  return "none";
 }

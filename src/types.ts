@@ -31,16 +31,34 @@ export const ANALYSIS_FALLBACK: AnalysisResult = {
 };
 
 // ---------------------------------------------------------------------------
-// Moderation actions (produced by Story 03 – Toxicity Detection)
+// Spam result (produced by Story 04 – Spam Detection)
+// ---------------------------------------------------------------------------
+
+/** Output from the rule-based spam heuristics (Story 04). */
+export interface SpamResult {
+  /** Composite spam score 0–1, clamped. */
+  score: number;
+  /** Human-readable reasons for each heuristic that fired. */
+  reasons: string[];
+  /** True when a URL matched the blocked-domain list (instant removal). */
+  blockedDomain: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Moderation actions (produced by Story 03/04)
 // ---------------------------------------------------------------------------
 
 /** Action taken (or that would be taken in dry-run) on a comment. */
 export type ModerationAction =
-  | "removed"        // Auto-removed due to high toxicity
-  | "flagged"        // Reported for manual review
-  | "none"           // Below thresholds or error — no action
-  | "dry_run_remove" // Would remove, but dry-run is on
-  | "dry_run_flag";  // Would flag, but dry-run is on
+  | "removed"              // Auto-removed due to high toxicity
+  | "flagged"              // Reported for manual review
+  | "none"                 // Below thresholds or error — no action
+  | "dry_run_remove"       // Would remove, but dry-run is on
+  | "dry_run_flag"         // Would flag, but dry-run is on
+  | "spam_removed"         // Auto-removed due to spam (Story 04)
+  | "spam_flagged"         // Reported for spam review (Story 04)
+  | "dry_run_spam_remove"  // Would spam-remove, but dry-run is on
+  | "dry_run_spam_flag";   // Would spam-flag, but dry-run is on
 
 // ---------------------------------------------------------------------------
 // Ingested comment record
@@ -112,6 +130,14 @@ export const SETTINGS = {
   TOXICITY_FLAG_THRESHOLD: "toxicityFlagThreshold",
   /** When true, log moderation actions without executing them (Story 03/07). */
   DRY_RUN: "dryRunMode",
+  /** Spam score above which comments are auto-removed (Story 04). */
+  SPAM_REMOVE_THRESHOLD: "spamRemoveThreshold",
+  /** Spam score above which comments are flagged for review (Story 04). */
+  SPAM_FLAG_THRESHOLD: "spamFlagThreshold",
+  /** Spam enforcement mode: "flag" (default) or "remove" (Story 04). */
+  SPAM_MODE: "spamMode",
+  /** Comma-separated blocked domains — instant removal (Story 04). */
+  SPAM_BLOCKED_DOMAINS: "spamBlockedDomains",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -132,6 +158,9 @@ export const REDIS_KEYS = {
     `comments:count:${subredditName.toLowerCase()}`,
   /** Cached AI analysis result for a comment (Story 02). */
   analysisCache: (commentId: string) => `analysis:cache:${commentId}`,
+  /** Tracks a recent comment body hash for duplicate-body detection (Story 04). */
+  recentBody: (authorName: string, hash: string) =>
+    `spam:recentbody:${authorName.toLowerCase()}:${hash}`,
 } as const;
 
 /** Maximum body length stored in Redis to keep record sizes reasonable. */

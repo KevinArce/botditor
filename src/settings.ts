@@ -64,6 +64,44 @@ Devvit.addSettings([
     scope: SettingScope.Installation,
   },
 
+  // ── Spam detection settings (Story 04) ────────────────────────────
+  {
+    type: "number",
+    name: SETTINGS.SPAM_REMOVE_THRESHOLD,
+    label: "Spam auto-remove threshold",
+    helpText:
+      "Comments with a spam score at or above this value are removed (only when spam mode is 'remove'). Set to 1.0 to disable.",
+    defaultValue: 0.80,
+    scope: SettingScope.Installation,
+  },
+  {
+    type: "number",
+    name: SETTINGS.SPAM_FLAG_THRESHOLD,
+    label: "Spam flag-for-review threshold",
+    helpText:
+      "Comments with a spam score at or above this value are reported for manual review.",
+    defaultValue: 0.50,
+    scope: SettingScope.Installation,
+  },
+  {
+    type: "string",
+    name: SETTINGS.SPAM_MODE,
+    label: "Spam enforcement mode",
+    helpText:
+      "Set to 'flag' (default) to only report spam, or 'remove' to auto-remove spam that exceeds the remove threshold.",
+    defaultValue: "flag",
+    scope: SettingScope.Installation,
+  },
+  {
+    type: "string",
+    name: SETTINGS.SPAM_BLOCKED_DOMAINS,
+    label: "Blocked domains (comma-separated)",
+    helpText:
+      "URLs matching these domains trigger instant spam removal (score = 1.0). Example: bit.ly,tinyurl.com",
+    defaultValue: "",
+    scope: SettingScope.Installation,
+  },
+
   // ── Global (developer) settings ───────────────────────────────────
   {
     type: "string",
