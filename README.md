@@ -8,6 +8,7 @@ Ever wondered if that comment was written by a human or a slightly sentient toas
 ✅ Spot potential bots trying to infiltrate your wholesome discussions 🤖  
 ✅ Auto-remove or flag toxic comments based on configurable thresholds ⚡  
 ✅ Flag suspicious comments for mod queue review with structured reasons 🚩  
+✅ Send warning PMs to users with configurable templates (strict/chill) ⚠️  
 ✅ Dry-run mode to tune moderation without affecting real content 🧪  
 ✅ Allow moderators to bulk-remove comment trees ("Mop" 🧹)  
 
@@ -21,9 +22,10 @@ Ever wondered if that comment was written by a human or a slightly sentient toas
 5. **Spam Enforcement** – Compares the spam score against configurable thresholds. Default mode is flag-only; can be switched to auto-remove. Blocked domains trigger instant removal. 🚫
 6. **Mod Log & Deduplication** – Every auto-removal is recorded in the mod log with a `botditor` details tag. Removed comment IDs are stored in Redis to prevent double-removal on event re-delivery. 📋
 7. **Flag for Review** – Comments above the flag threshold but below auto-remove get reported to the mod queue with a structured reason (`[botditor] toxicity=0.72 — reason`). Flagged IDs are deduplicated via Redis with a 24-hour TTL. 🚩
-8. **Safe by Default** – If the AI call fails (no key, network error, bad response), all scores default to zero — no moderation action is taken. 🛡️
-9. **Dry-Run Mode** – Moderators can enable dry-run to see what actions *would* be taken without executing them. 🧪
-10. **Caching** – Results are cached in Redis for 1 hour to avoid redundant API calls on event re-deliveries. ⚡
+8. **Warning Messages** – When a comment is flagged, a warning PM is sent to the author using a profile-specific template (strict = formal, chill = friendly). Templates support `{{username}}`, `{{issue}}`, and `{{rulesLink}}` placeholders and are configurable in App Settings. A 48-hour per-user cooldown prevents spam. ⚠️
+9. **Safe by Default** – If the AI call fails (no key, network error, bad response), all scores default to zero — no moderation action is taken. 🛡️
+10. **Dry-Run Mode** – Moderators can enable dry-run to see what actions *would* be taken without executing them. 🧪
+11. **Caching** – Results are cached in Redis for 1 hour to avoid redundant API calls on event re-deliveries. ⚡
 
 ---
 
@@ -81,6 +83,9 @@ After installing the app on a subreddit, moderators can configure these from the
 | **Spam flag-for-review threshold** | Spam score at or above triggers a report for manual review. | `0.50` |
 | **Spam enforcement mode** | `flag` (default, report only) or `remove` (auto-remove above threshold). | `flag` |
 | **Blocked domains** | Comma-separated domains that trigger instant spam removal (score = 1.0). | (empty) |
+| **Moderation profile** | `chill` (relaxed thresholds) or `strict` (aggressive moderation). | `chill` |
+| **Warning template (strict)** | PM body for flagged users under the strict profile. Supports `{{username}}`, `{{issue}}`, `{{rulesLink}}`. | (formal) |
+| **Warning template (chill)** | PM body for flagged users under the chill profile. Supports `{{username}}`, `{{issue}}`, `{{rulesLink}}`. | (friendly) |
 | **Dry-run mode** | Log moderation actions without executing them. Great for threshold tuning. | `false` |
 
 ### 6️⃣ Run Locally (Playtest)
@@ -121,10 +126,12 @@ src/
 ├── ai.ts                # AI analysis pipeline (Gemini API)
 ├── spam.ts              # Rule-based spam scoring (Story 04)
 ├── moderation.ts        # Toxicity & spam enforcement (remove/flag/dry-run/mod-log/dedup)
+├── warnings.ts          # Warning PMs with configurable templates & 48h cooldown (Story 09)
 ├── commentIngestion.ts  # Comment ingestion handler
 ├── commentStorage.ts    # Redis persistence layer
 ├── allowlist.ts         # User allowlist management
 ├── nuke.ts              # "Mop" bulk comment removal
+├── rules.ts             # Centralized moderation rules loader (Story 06)
 ├── settings.ts          # Devvit settings registration
 ├── types.ts             # Shared types, constants, Redis key helpers
 └── __tests__/           # Vitest unit tests
@@ -146,7 +153,6 @@ src/
 ## 🚀 Future Features
 🔜 Bot detection enforcement (Story 05)  
 🔜 Sentiment tracking dashboard 📈  
-🔜 Warning messages for borderline comments  
 
 ---
 
