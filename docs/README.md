@@ -10,7 +10,7 @@
 - [story-04-spam-detection.md](./story-04-spam-detection.md) — ✅ Keep & Enrich
 - [story-05-bot-detection.md](./story-05-bot-detection.md) — ⚠️ Scoped Down
 - [story-07-auto-remove-comments.md](./story-07-auto-remove-comments.md) — ✅ Keep & Enrich
-- [story-08-flag-for-review.md](./story-08-flag-for-review.md) — ✅ Keep & Enrich
+- [story-08-flag-for-review.md](./story-08-flag-for-review.md) — 🚀 Implemented
 - [story-09-warning-messages.md](./story-09-warning-messages.md) — ⚠️ Scoped Down
 - [story-10-user-bans-command.md](./story-10-user-bans-command.md) — ⚠️ Scoped Down
 - [story-15-moderation-styles.md](./story-15-moderation-styles.md) — ⚠️ Scoped Down

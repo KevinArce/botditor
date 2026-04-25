@@ -17,6 +17,7 @@ function createMockContext(overrides: {
   modLogThrows?: boolean;
   redisGetFn?: ReturnType<typeof vi.fn>;
   redisSetFn?: ReturnType<typeof vi.fn>;
+  redisExpireFn?: ReturnType<typeof vi.fn>;
 } = {}): TriggerContext {
   const removeFn = overrides.removeFn ?? (overrides.removeThrows
     ? vi.fn().mockRejectedValue(new Error("404 not found"))
@@ -30,6 +31,7 @@ function createMockContext(overrides: {
 
   const redisGetFn = overrides.redisGetFn ?? vi.fn().mockResolvedValue(null);
   const redisSetFn = overrides.redisSetFn ?? vi.fn().mockResolvedValue(undefined);
+  const redisExpireFn = overrides.redisExpireFn ?? vi.fn().mockResolvedValue(undefined);
 
   const mockComment = {
     remove: removeFn,
@@ -47,6 +49,7 @@ function createMockContext(overrides: {
     redis: {
       get: redisGetFn,
       set: redisSetFn,
+      expire: redisExpireFn,
     },
   } as unknown as TriggerContext;
 }
@@ -319,5 +322,132 @@ describe("enforceToxicity", () => {
 
     // Should still remove despite Redis failure
     expect(action).toBe("removed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story 08 – Flag for Manual Review
+// ---------------------------------------------------------------------------
+
+describe("enforceToxicity — Story 08 flagging", () => {
+  it("reports with structured reason including score type and value", async () => {
+    const reportFn = vi.fn().mockResolvedValue(undefined);
+    const context = createMockContext({ reportFn });
+    const record = makeRecord();
+    const analysis = makeAnalysis({ toxicityScore: 0.72, reason: "possibly offensive" });
+
+    const action = await enforceToxicity(record, analysis, makeRules(), context);
+
+    expect(action).toBe("flagged");
+    expect(reportFn).toHaveBeenCalledWith(
+      expect.anything(),
+      { reason: expect.stringContaining("[botditor] toxicity=0.72") }
+    );
+    // Verify the reason text is included after the dash
+    const callArgs = reportFn.mock.calls[0][1];
+    expect(callArgs.reason).toContain("possibly offensive");
+  });
+
+  it("stores flagged record in Redis with score, reason, and timestamp", async () => {
+    const redisSetFn = vi.fn().mockResolvedValue(undefined);
+    const redisExpireFn = vi.fn().mockResolvedValue(undefined);
+    const context = createMockContext({ redisSetFn, redisExpireFn });
+    const record = makeRecord();
+    const analysis = makeAnalysis({ toxicityScore: 0.70, reason: "borderline content" });
+
+    const action = await enforceToxicity(record, analysis, makeRules(), context);
+
+    expect(action).toBe("flagged");
+    // The second set call is for the flagged record (first may be from dedup)
+    const flagSetCall = redisSetFn.mock.calls.find(
+      (args: unknown[]) => (args[0] as string).startsWith("flagged:")
+    );
+    expect(flagSetCall).toBeDefined();
+    expect(flagSetCall![0]).toBe("flagged:t1_test123");
+    const payload = JSON.parse(flagSetCall![1] as string);
+    expect(payload.score).toBe(0.70);
+    expect(payload.reason).toContain("borderline content");
+    expect(payload.timestamp).toBeDefined();
+  });
+
+  it("sets 24-hour TTL on flagged record", async () => {
+    const redisExpireFn = vi.fn().mockResolvedValue(undefined);
+    const context = createMockContext({ redisExpireFn });
+    const record = makeRecord();
+    const analysis = makeAnalysis({ toxicityScore: 0.65 });
+
+    await enforceToxicity(record, analysis, makeRules(), context);
+
+    expect(redisExpireFn).toHaveBeenCalledWith("flagged:t1_test123", 86_400);
+  });
+
+  it("skips flag when dedup key already exists (within 24h window)", async () => {
+    // Simulate: flagged:<id> already exists
+    const redisGetFn = vi.fn().mockImplementation((key: string) => {
+      if (key.startsWith("flagged:")) return Promise.resolve('{"score":0.7}');
+      return Promise.resolve(null);
+    });
+    const reportFn = vi.fn().mockResolvedValue(undefined);
+    const context = createMockContext({ redisGetFn, reportFn });
+    const record = makeRecord();
+    const analysis = makeAnalysis({ toxicityScore: 0.70 });
+
+    const action = await enforceToxicity(record, analysis, makeRules(), context);
+
+    expect(action).toBe("none");
+    // Should NOT have called report
+    expect(reportFn).not.toHaveBeenCalled();
+  });
+
+  it("proceeds with flag when dedup Redis read fails", async () => {
+    const redisGetFn = vi.fn().mockRejectedValue(new Error("Redis down"));
+    const reportFn = vi.fn().mockResolvedValue(undefined);
+    const context = createMockContext({ redisGetFn, reportFn });
+    const record = makeRecord();
+    const analysis = makeAnalysis({ toxicityScore: 0.70 });
+
+    const action = await enforceToxicity(record, analysis, makeRules(), context);
+
+    expect(action).toBe("flagged");
+    expect(reportFn).toHaveBeenCalled();
+  });
+
+  it("still returns flagged when Redis persistence fails", async () => {
+    const redisSetFn = vi.fn().mockImplementation((key: string) => {
+      if (key.startsWith("flagged:")) return Promise.reject(new Error("Redis write fail"));
+      return Promise.resolve(undefined);
+    });
+    const reportFn = vi.fn().mockResolvedValue(undefined);
+    const context = createMockContext({ redisSetFn, reportFn });
+    const record = makeRecord();
+    const analysis = makeAnalysis({ toxicityScore: 0.70 });
+
+    const action = await enforceToxicity(record, analysis, makeRules(), context);
+
+    // Report succeeded, so action is still "flagged" even though Redis write failed
+    expect(action).toBe("flagged");
+  });
+
+  it("does NOT store flag record in dry-run mode", async () => {
+    const redisSetFn = vi.fn().mockResolvedValue(undefined);
+    const reportFn = vi.fn().mockResolvedValue(undefined);
+    const context = createMockContext({ redisSetFn, reportFn });
+    const record = makeRecord();
+    const analysis = makeAnalysis({ toxicityScore: 0.70 });
+
+    const action = await enforceToxicity(
+      record,
+      analysis,
+      makeRules({ dryRun: true }),
+      context
+    );
+
+    expect(action).toBe("dry_run_flag");
+    expect(reportFn).not.toHaveBeenCalled();
+    // No flagged: key should be written
+    const flagSetCall = redisSetFn.mock.calls.find(
+      (args: unknown[]) => (args[0] as string).startsWith("flagged:")
+    );
+    expect(flagSetCall).toBeUndefined();
   });
 });

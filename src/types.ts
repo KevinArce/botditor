@@ -200,6 +200,8 @@ export const REDIS_KEYS = {
     `spam:recentbody:${authorName.toLowerCase()}:${hash}`,
   /** Deduplication flag for auto-removed comments (Story 07). */
   removedComment: (commentId: string) => `removed:${commentId}`,
+  /** Flagged-comment record for dedup + stats (Story 08). */
+  flaggedComment: (commentId: string) => `flagged:${commentId}`,
 } as const;
 
 /** Maximum body length stored in Redis to keep record sizes reasonable. */
@@ -210,3 +212,6 @@ export const MAX_PROMPT_BODY_LENGTH = 8000;
 
 /** Cache TTL for analysis results — 1 hour in milliseconds (Story 02). */
 export const ANALYSIS_CACHE_TTL_MS = 3_600_000;
+
+/** Flag deduplication TTL — 24 hours in seconds (Story 08). */
+export const FLAG_DEDUP_TTL_S = 86_400;

@@ -1,5 +1,5 @@
 /**
- * Moderation Enforcement – Stories 03 / 04 / 06 / 07
+ * Moderation Enforcement – Stories 03 / 04 / 06 / 07 / 08
  *
  * After the AI analysis pipeline scores a comment, this module compares
  * scores against the pre-validated `ModerationRules` snapshot and takes
@@ -15,6 +15,12 @@
  *   • Removed comment IDs are stored in Redis (`removed:<commentId>`) for
  *     deduplication — prevents re-removal on event re-delivery.
  *
+ * Story 08 additions:
+ *   • `flagComment()` now includes a structured reason string with the score
+ *     type and value (e.g. `[botditor] toxicity=0.72 — possibly offensive`).
+ *   • Flagged comment IDs are stored in Redis (`flagged:<commentId>`) with a
+ *     24-hour TTL — deduplication + persistence for Story 14 stats.
+ *
  * Fail-safe: on any error the function returns "none" — no exception
  * escapes.
  */
@@ -26,7 +32,7 @@ import type {
   SpamResult,
   ModerationRules,
 } from "./types.js";
-import { REDIS_KEYS } from "./types.js";
+import { REDIS_KEYS, FLAG_DEDUP_TTL_S } from "./types.js";
 
 /** Reddit APIs enforce a 100-char limit on reason/description fields. */
 const REASON_MAX_LEN = 100;
@@ -95,7 +101,8 @@ async function enforceToxicityInner(
       );
       return "dry_run_flag";
     }
-    return await flagComment(record, reason, context);
+    const flagReason = `[botditor] toxicity=${toxicityScore} — ${reason}`;
+    return await flagComment(record, flagReason, toxicityScore, context);
   }
 
   // Below both thresholds — no action
@@ -190,7 +197,8 @@ async function enforceSpamInner(
       );
       return "dry_run_spam_flag";
     }
-    const result = await flagComment(record, `Spam: ${reasonStr}`, context);
+    const flagReason = `[botditor] spam=${score} — ${reasonStr}`;
+    const result = await flagComment(record, flagReason, score, context);
     return result === "flagged" ? "spam_flagged" : "none";
   }
 
@@ -294,16 +302,43 @@ async function removeComment(
 }
 
 /**
- * Report a comment for manual moderator review.
+ * Report a comment for manual moderator review (Story 08).
+ *
+ * Deduplication: if `flagged:<commentId>` already exists in Redis, the
+ * report is skipped — prevents duplicate reports within the 24-hour window.
+ *
+ * Persistence: on success, stores `{ score, reason, timestamp }` in Redis
+ * under `flagged:<commentId>` with a 24-hour TTL so Story 14 stats can
+ * query flagged counts.
  */
 async function flagComment(
   record: IngestedComment,
   reason: string,
+  score: number,
   context: TriggerContext
 ): Promise<ModerationAction> {
+  // ── Dedup check (Story 08) ────────────────────────────────────────
+  try {
+    const dedupKey = REDIS_KEYS.flaggedComment(record.commentId);
+    const alreadyFlagged = await context.redis.get(dedupKey);
+    if (alreadyFlagged) {
+      console.log(
+        `[moderation] Comment ${record.commentId} already flagged (dedup) — skipping`
+      );
+      return "none";
+    }
+  } catch (err) {
+    // Redis read failure should not block flagging — continue
+    console.error(
+      `[moderation] Flag dedup check failed for ${record.commentId} — proceeding:`,
+      err instanceof Error ? err.message : err
+    );
+  }
+
+  // ── Report the comment ────────────────────────────────────────────
   try {
     const comment = await context.reddit.getCommentById(record.commentId);
-    await context.reddit.report(comment, { reason: truncateReason(`Botditor: ${reason}`) });
+    await context.reddit.report(comment, { reason: truncateReason(reason) });
     console.log(
       `[moderation] Flagged comment ${record.commentId} by u/${record.authorName} — "${reason}"`
     );
@@ -320,6 +355,23 @@ async function flagComment(
       );
     }
     return "none";
+  }
+
+  // ── Persist flagged record + set 24h TTL (Story 08) ───────────────
+  try {
+    const dedupKey = REDIS_KEYS.flaggedComment(record.commentId);
+    const payload = JSON.stringify({
+      score,
+      reason,
+      timestamp: new Date().toISOString(),
+    });
+    await context.redis.set(dedupKey, payload);
+    await context.redis.expire(dedupKey, FLAG_DEDUP_TTL_S);
+  } catch (err) {
+    console.error(
+      `[moderation] Failed to set flag dedup key for ${record.commentId}:`,
+      err instanceof Error ? err.message : err
+    );
   }
 
   return "flagged";

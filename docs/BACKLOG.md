@@ -13,6 +13,7 @@
 |-------|-------|
 | Story 01 — Comment Ingestion | Fully implemented. `CommentSubmit` trigger, enabled toggle, allowlist guard, self-comment guard, Redis persistence with duplicate detection, sanitization, and Story 02 dispatch stub. Also delivers partial Story 23 (allowlist service + menu actions). |
 | Story 07 — Auto-Remove Comments | Fully implemented. Threshold-triggered auto-removal via `comment.remove()`, mod log entries with `botditor` details tag, Redis deduplication (`removed:<commentId>`), dry-run support, and fail-safe error handling. Lives in `src/moderation.ts`. |
+| Story 08 — Flag for Manual Review | Fully implemented. Structured reason strings (`[botditor] toxicity=<score> — <reason>`), 24-hour deduplication via `flagged:<commentId>` Redis key with TTL, persistence of `{ score, reason, timestamp }` for Story 14 stats. Lives in `src/moderation.ts`. |
 
 ### Kept & Enriched (✅)
 | Story | Change |
@@ -22,7 +23,7 @@
 | Story 04 — Spam Detection | Expanded rule-based heuristics with concrete scoring deltas, combined with AI score for ambiguous cases, added domain block-list and account-age signals. |
 | Story 06 — Auto-Moderation Rules | Listed all settings fields by name and type, added threshold validation logic, startup audit log. |
 | ~~Story 07 — Auto-Remove Comments~~ | _Moved to Implemented._ |
-| Story 08 — Flag for Manual Review | Upgraded to use Reddit's native report API; specified structured report reason format; added 24-hour dedup window. |
+| ~~Story 08 — Flag for Manual Review~~ | _Moved to Implemented._ |
 | Story 11 — Thread Summarization | Added Gemini prompt template, token budget strategy, top-50-comment selection, and post/delete edge cases. |
 | Story 14 — Subreddit Stats | Clarified metric list, date-keyed counter strategy, and conflict/overlap note with Story 13. |
 | Story 16 — Sentiment Tracking | Added 30-day retention policy, `kvStore` key format, and integration points with Stories 13/14. |
@@ -66,7 +67,7 @@ _No stories were fully cut._ Story 18's original "copyable alert summary only" s
 | 04 | Spam Detection | ✅ Keep & Enrich | High |
 | 05 | Bot Detection | ⚠️ Scoped Down | Medium |
 | 07 | Auto-Remove Comments | 🚀 Implemented | High |
-| 08 | Flag for Manual Review | ✅ Keep & Enrich | High |
+| 08 | Flag for Manual Review | 🚀 Implemented | High |
 | 09 | Warning Messages | ⚠️ Scoped Down | Medium |
 | 10 | User Bans via Menu | ⚠️ Scoped Down | Medium |
 | 15 | Moderation Style Profiles | ⚠️ Scoped Down | High |

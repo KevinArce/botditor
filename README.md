@@ -7,6 +7,7 @@ Ever wondered if that comment was written by a human or a slightly sentient toas
 ✅ Identify spam faster than you can say "HODL 🚀"  
 ✅ Spot potential bots trying to infiltrate your wholesome discussions 🤖  
 ✅ Auto-remove or flag toxic comments based on configurable thresholds ⚡  
+✅ Flag suspicious comments for mod queue review with structured reasons 🚩  
 ✅ Dry-run mode to tune moderation without affecting real content 🧪  
 ✅ Allow moderators to bulk-remove comment trees ("Mop" 🧹)  
 
@@ -19,9 +20,10 @@ Ever wondered if that comment was written by a human or a slightly sentient toas
 4. **Toxicity Enforcement** – Compares the toxicity score against configurable thresholds to auto-remove, flag for review, or take no action. 🚨
 5. **Spam Enforcement** – Compares the spam score against configurable thresholds. Default mode is flag-only; can be switched to auto-remove. Blocked domains trigger instant removal. 🚫
 6. **Mod Log & Deduplication** – Every auto-removal is recorded in the mod log with a `botditor` details tag. Removed comment IDs are stored in Redis to prevent double-removal on event re-delivery. 📋
-7. **Safe by Default** – If the AI call fails (no key, network error, bad response), all scores default to zero — no moderation action is taken. 🛡️
-8. **Dry-Run Mode** – Moderators can enable dry-run to see what actions *would* be taken without executing them. 🧪
-9. **Caching** – Results are cached in Redis for 1 hour to avoid redundant API calls on event re-deliveries. ⚡
+7. **Flag for Review** – Comments above the flag threshold but below auto-remove get reported to the mod queue with a structured reason (`[botditor] toxicity=0.72 — reason`). Flagged IDs are deduplicated via Redis with a 24-hour TTL. 🚩
+8. **Safe by Default** – If the AI call fails (no key, network error, bad response), all scores default to zero — no moderation action is taken. 🛡️
+9. **Dry-Run Mode** – Moderators can enable dry-run to see what actions *would* be taken without executing them. 🧪
+10. **Caching** – Results are cached in Redis for 1 hour to avoid redundant API calls on event re-deliveries. ⚡
 
 ---
 
