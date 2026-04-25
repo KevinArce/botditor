@@ -24,10 +24,12 @@ Implementation notes:
 - The dedup check, mod log write, and dedup key set each have their own try/catch — failures in one never block the others.
 - `modLog` is omitted from Devvit's `TriggerContext` type but is available at runtime; accessed via a targeted cast (same pattern as `nuke.ts`).
 - 7 unit tests cover mod log entries, dedup behavior, dry-run exclusions, and Redis failure resilience.
+- Reddit's API enforces a **100-character limit** on the `reason` (report) and `description` (mod log) fields. A `truncateReason()` helper in `moderation.ts` clips any string that exceeds this limit, appending an `…` ellipsis. This is applied at both API boundaries (`reddit.report()` and `modLog.add()`), not at the AI layer, so internal logs still contain the full reason text.
 
 Devvit hooks:
 - `comment.remove()` — reused from `src/nuke.ts`
-- `context.modLog.add({ action: 'removecomment', target: commentId, details: 'botditor', description: reason })`
+- `context.modLog.add({ action: 'removecomment', target: commentId, details: 'botditor', description: truncateReason(reason) })`
+- `context.reddit.report(comment, { reason: truncateReason('Botditor: ' + reason) })` — flag action
 - `context.redis.set(`removed:${commentId}`, '1')` — deduplication
 - `context.redis.get(`removed:${commentId}`)` — dedup check before removal
 
@@ -38,5 +40,6 @@ Edge cases:
 - App setting `dryRun` toggled on mid-flight: check the setting at action time, not at trigger time.
 - Mod log write fails: logged as error, removal still counts as successful.
 - Redis dedup read fails: logged as error, removal proceeds anyway (fail-open).
+- AI-generated reason exceeds 100 characters: `truncateReason()` clips to 99 chars + `…` before sending to Reddit APIs, preventing gRPC `TOO_LONG` errors.
 
 Dependencies: Story 01 (Comment Ingestion), Story 02 (AI scores), Story 06 (thresholds).
