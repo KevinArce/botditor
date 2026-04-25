@@ -28,6 +28,15 @@ import type {
 } from "./types.js";
 import { REDIS_KEYS } from "./types.js";
 
+/** Reddit APIs enforce a 100-char limit on reason/description fields. */
+const REASON_MAX_LEN = 100;
+
+/** Truncate a reason string so it fits Reddit's character limit. */
+function truncateReason(reason: string, maxLen = REASON_MAX_LEN): string {
+  if (reason.length <= maxLen) return reason;
+  return reason.slice(0, maxLen - 1) + "…";
+}
+
 // ---------------------------------------------------------------------------
 // Toxicity enforcement (Story 03)
 // ---------------------------------------------------------------------------
@@ -261,7 +270,7 @@ async function removeComment(
       action: "removecomment",
       target: record.commentId,
       details: "botditor",
-      description: reason,
+      description: truncateReason(reason),
     });
   } catch (err) {
     console.error(
@@ -294,7 +303,7 @@ async function flagComment(
 ): Promise<ModerationAction> {
   try {
     const comment = await context.reddit.getCommentById(record.commentId);
-    await context.reddit.report(comment, { reason: `Botditor: ${reason}` });
+    await context.reddit.report(comment, { reason: truncateReason(`Botditor: ${reason}`) });
     console.log(
       `[moderation] Flagged comment ${record.commentId} by u/${record.authorName} — "${reason}"`
     );
