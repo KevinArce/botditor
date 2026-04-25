@@ -11,6 +11,7 @@ Ever wondered if that comment was written by a human or a slightly sentient toas
 ✅ Send warning PMs to users with configurable templates (strict/chill) ⚠️  
 ✅ Dry-run mode to tune moderation without affecting real content 🧪  
 ✅ Allow moderators to bulk-remove comment trees ("Mop" 🧹)  
+✅ Ban users directly from comments with a pre-filled confirmation form 🔨
 
 ---
 
@@ -130,6 +131,7 @@ src/
 ├── commentIngestion.ts  # Comment ingestion handler
 ├── commentStorage.ts    # Redis persistence layer
 ├── allowlist.ts         # User allowlist management
+├── bans.ts              # "Ban User" menu action (Story 10)
 ├── nuke.ts              # "Mop" bulk comment removal
 ├── rules.ts             # Centralized moderation rules loader (Story 06)
 ├── settings.ts          # Devvit settings registration
@@ -143,6 +145,7 @@ src/
 
 ### Comment Menu
 - **Mop comments** – Remove a comment and all its children 🧹
+- **Ban User** – Ban the comment's author via a pre-filled confirmation form (reason, duration, mod note) 🔨
 - **Add/Remove author to allowlist** – Allowlisted users' comments skip AI analysis ✅
 
 ### Post Menu

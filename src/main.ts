@@ -1,7 +1,9 @@
 import { Devvit, type FormField } from "@devvit/public-api";
 
 import { handleNuke, handleNukePost } from "./nuke.js";
+import { handleBanUser } from "./bans.js";
 import { handleCommentSubmit } from "./commentIngestion.js";
+import { getComment } from "./commentStorage.js";
 import {
   addUserToAllowlist,
   removeUserFromAllowlist,
@@ -202,6 +204,117 @@ Devvit.addMenuItem({
   forUserType: "moderator",
   onPress: (_, context) => {
     context.ui.showForm(nukePostForm);
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Story 10 – Ban User Menu Action
+// ---------------------------------------------------------------------------
+
+const banForm = Devvit.createForm(
+  (data) => {
+    return {
+      fields: [
+        {
+          name: "username",
+          label: "Username to ban",
+          type: "string",
+          defaultValue: data?.username ?? "",
+          required: true,
+        },
+        {
+          name: "reason",
+          label: "Ban reason",
+          type: "string",
+          defaultValue: data?.reason ?? "",
+          helpText:
+            "Shown to the banned user. Pre-filled from AI analysis if available.",
+        },
+        {
+          name: "duration",
+          label: "Duration (days, 0 = permanent)",
+          type: "number",
+          defaultValue: data?.duration ?? 0,
+          helpText: "Enter 0 for a permanent ban, or a number of days.",
+        },
+        {
+          name: "note",
+          label: "Mod note (internal)",
+          type: "string",
+          defaultValue: "",
+          helpText: "Internal note visible only to moderators.",
+        },
+      ] as FormField[],
+      title: "Ban User",
+      acceptLabel: "Ban",
+      cancelLabel: "Cancel",
+    };
+  },
+  async ({ values }, context) => {
+    const username = values.username as string;
+    if (!username || username.trim().length === 0) {
+      context.ui.showToast("Username is required.");
+      return;
+    }
+
+    const subredditName = (await context.reddit.getCurrentSubreddit()).name;
+
+    const result = await handleBanUser(
+      {
+        username: username.trim(),
+        subredditName,
+        reason: (values.reason as string) || "",
+        duration: Math.max(0, Math.floor(Number(values.duration) || 0)),
+        note: (values.note as string) || "",
+        commentId: context.commentId ?? "",
+      },
+      context
+    );
+
+    console.log(
+      `[ban] Result — ${result.success ? "success" : "fail"}: ${result.message}`
+    );
+    context.ui.showToast(
+      `${result.success ? "✅" : "❌"} ${result.message}`
+    );
+  }
+);
+
+Devvit.addMenuItem({
+  label: "Ban User",
+  description:
+    "Ban this comment's author from the subreddit with a pre-filled confirmation form.",
+  location: "comment",
+  forUserType: "moderator",
+  onPress: async (event, context) => {
+    if (!event.targetId) {
+      context.ui.showToast("Could not determine comment.");
+      return;
+    }
+
+    let username = "";
+    let reason = "";
+
+    try {
+      const comment = await context.reddit.getCommentById(event.targetId);
+      username = comment.authorName;
+    } catch (err) {
+      console.error("[ban] Failed to fetch comment:", err);
+      context.ui.showToast("Failed to fetch comment details.");
+      return;
+    }
+
+    // Attempt to pre-fill reason from stored Gemini analysis
+    try {
+      const stored = await getComment(event.targetId, context.redis);
+      if (stored?.analysis?.reason) {
+        reason = stored.analysis.reason;
+      }
+    } catch {
+      // Non-fatal: form will just have an empty reason field
+    }
+
+    context.ui.showForm(banForm, { username, reason, duration: 0 });
   },
 });
 

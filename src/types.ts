@@ -210,6 +210,12 @@ export const REDIS_KEYS = {
   flaggedComment: (commentId: string) => `flagged:${commentId}`,
   /** Warning cooldown key per user (Story 09). */
   warnedUser: (authorName: string) => `warned:${authorName.toLowerCase()}`,
+  /** Individual ban record for analytics (Story 10 / 14). */
+  banRecord: (username: string, epochMs: number) =>
+    `ban:${username.toLowerCase()}:${epochMs}`,
+  /** Counter of total bans executed per subreddit (Story 10 / 14). */
+  banCount: (subredditName: string) =>
+    `bans:count:${subredditName.toLowerCase()}`,
 } as const;
 
 /** Maximum body length stored in Redis to keep record sizes reasonable. */
