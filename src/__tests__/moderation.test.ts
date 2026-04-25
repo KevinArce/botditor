@@ -13,12 +13,23 @@ function createMockContext(overrides: {
   removeThrows?: boolean;
   removeFn?: ReturnType<typeof vi.fn>;
   reportFn?: ReturnType<typeof vi.fn>;
+  modLogFn?: ReturnType<typeof vi.fn>;
+  modLogThrows?: boolean;
+  redisGetFn?: ReturnType<typeof vi.fn>;
+  redisSetFn?: ReturnType<typeof vi.fn>;
 } = {}): TriggerContext {
   const removeFn = overrides.removeFn ?? (overrides.removeThrows
     ? vi.fn().mockRejectedValue(new Error("404 not found"))
     : vi.fn().mockResolvedValue(undefined));
 
   const reportFn = overrides.reportFn ?? vi.fn().mockResolvedValue(undefined);
+
+  const modLogFn = overrides.modLogFn ?? (overrides.modLogThrows
+    ? vi.fn().mockRejectedValue(new Error("Mod log unavailable"))
+    : vi.fn().mockResolvedValue(undefined));
+
+  const redisGetFn = overrides.redisGetFn ?? vi.fn().mockResolvedValue(null);
+  const redisSetFn = overrides.redisSetFn ?? vi.fn().mockResolvedValue(undefined);
 
   const mockComment = {
     remove: removeFn,
@@ -29,6 +40,13 @@ function createMockContext(overrides: {
     reddit: {
       getCommentById: vi.fn().mockResolvedValue(mockComment),
       report: reportFn,
+    },
+    modLog: {
+      add: modLogFn,
+    },
+    redis: {
+      get: redisGetFn,
+      set: redisSetFn,
     },
   } as unknown as TriggerContext;
 }
@@ -209,5 +227,97 @@ describe("enforceToxicity", () => {
     // Should fall through to "none" with default thresholds (0.85/0.60)
     const action = await enforceToxicity(record, analysis, makeRules(), context);
     expect(action).toBe("none");
+  });
+
+  // ── Story 07: Mod log entries ─────────────────────────────────────
+
+  it("writes to mod log after successful removal with botditor details tag", async () => {
+    const modLogFn = vi.fn().mockResolvedValue(undefined);
+    const context = createMockContext({ modLogFn });
+    const record = makeRecord();
+    const analysis = makeAnalysis({ toxicityScore: 0.95, reason: "extremely toxic language" });
+
+    const action = await enforceToxicity(record, analysis, makeRules(), context);
+
+    expect(action).toBe("removed");
+    expect(modLogFn).toHaveBeenCalledWith({
+      action: "removecomment",
+      target: "t1_test123",
+      details: "botditor",
+      description: "extremely toxic language",
+    });
+  });
+
+  it("still returns removed when mod log write fails", async () => {
+    const context = createMockContext({ modLogThrows: true });
+    const record = makeRecord();
+    const analysis = makeAnalysis({ toxicityScore: 0.95 });
+
+    const action = await enforceToxicity(record, analysis, makeRules(), context);
+
+    // Removal should succeed even if mod log fails
+    expect(action).toBe("removed");
+  });
+
+  it("does NOT write mod log in dry-run mode", async () => {
+    const modLogFn = vi.fn().mockResolvedValue(undefined);
+    const context = createMockContext({ modLogFn });
+    const record = makeRecord();
+    const analysis = makeAnalysis({ toxicityScore: 0.95 });
+
+    await enforceToxicity(record, analysis, makeRules({ dryRun: true }), context);
+
+    expect(modLogFn).not.toHaveBeenCalled();
+  });
+
+  // ── Story 07: Deduplication via Redis ─────────────────────────────
+
+  it("sets dedup key in Redis after successful removal", async () => {
+    const redisSetFn = vi.fn().mockResolvedValue(undefined);
+    const context = createMockContext({ redisSetFn });
+    const record = makeRecord();
+    const analysis = makeAnalysis({ toxicityScore: 0.95 });
+
+    const action = await enforceToxicity(record, analysis, makeRules(), context);
+
+    expect(action).toBe("removed");
+    expect(redisSetFn).toHaveBeenCalledWith("removed:t1_test123", "1");
+  });
+
+  it("skips removal when dedup key already exists", async () => {
+    const redisGetFn = vi.fn().mockResolvedValue("1"); // Already removed
+    const context = createMockContext({ redisGetFn });
+    const record = makeRecord();
+    const analysis = makeAnalysis({ toxicityScore: 0.95 });
+
+    const action = await enforceToxicity(record, analysis, makeRules(), context);
+
+    expect(action).toBe("none");
+    // Should NOT have attempted to fetch/remove the comment
+    expect(context.reddit.getCommentById).not.toHaveBeenCalled();
+  });
+
+  it("does NOT set dedup key in dry-run mode", async () => {
+    const redisSetFn = vi.fn().mockResolvedValue(undefined);
+    const context = createMockContext({ redisSetFn });
+    const record = makeRecord();
+    const analysis = makeAnalysis({ toxicityScore: 0.95 });
+
+    await enforceToxicity(record, analysis, makeRules({ dryRun: true }), context);
+
+    expect(redisSetFn).not.toHaveBeenCalled();
+  });
+
+  it("proceeds with removal when dedup Redis read fails", async () => {
+    const redisGetFn = vi.fn().mockRejectedValue(new Error("Redis down"));
+    const redisSetFn = vi.fn().mockResolvedValue(undefined);
+    const context = createMockContext({ redisGetFn, redisSetFn });
+    const record = makeRecord();
+    const analysis = makeAnalysis({ toxicityScore: 0.95 });
+
+    const action = await enforceToxicity(record, analysis, makeRules(), context);
+
+    // Should still remove despite Redis failure
+    expect(action).toBe("removed");
   });
 });

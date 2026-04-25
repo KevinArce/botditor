@@ -18,9 +18,10 @@ Ever wondered if that comment was written by a human or a slightly sentient toas
 3. **Spam Detection** – Rule-based heuristics score the comment for spam (URL count, blocked domains, repeated body, new account). Fast, no API cost. If the rule-based score ≥ 0.5 it overrides the AI spam score. 🕵️
 4. **Toxicity Enforcement** – Compares the toxicity score against configurable thresholds to auto-remove, flag for review, or take no action. 🚨
 5. **Spam Enforcement** – Compares the spam score against configurable thresholds. Default mode is flag-only; can be switched to auto-remove. Blocked domains trigger instant removal. 🚫
-6. **Safe by Default** – If the AI call fails (no key, network error, bad response), all scores default to zero — no moderation action is taken. 🛡️
-7. **Dry-Run Mode** – Moderators can enable dry-run to see what actions *would* be taken without executing them. 🧪
-8. **Caching** – Results are cached in Redis for 1 hour to avoid redundant API calls on event re-deliveries. ⚡
+6. **Mod Log & Deduplication** – Every auto-removal is recorded in the mod log with a `botditor` details tag. Removed comment IDs are stored in Redis to prevent double-removal on event re-delivery. 📋
+7. **Safe by Default** – If the AI call fails (no key, network error, bad response), all scores default to zero — no moderation action is taken. 🛡️
+8. **Dry-Run Mode** – Moderators can enable dry-run to see what actions *would* be taken without executing them. 🧪
+9. **Caching** – Results are cached in Redis for 1 hour to avoid redundant API calls on event re-deliveries. ⚡
 
 ---
 
@@ -117,7 +118,7 @@ src/
 ├── main.ts              # App entry point – triggers, menus, forms
 ├── ai.ts                # AI analysis pipeline (Gemini API)
 ├── spam.ts              # Rule-based spam scoring (Story 04)
-├── moderation.ts        # Toxicity & spam enforcement (remove/flag/dry-run)
+├── moderation.ts        # Toxicity & spam enforcement (remove/flag/dry-run/mod-log/dedup)
 ├── commentIngestion.ts  # Comment ingestion handler
 ├── commentStorage.ts    # Redis persistence layer
 ├── allowlist.ts         # User allowlist management

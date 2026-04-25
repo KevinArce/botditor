@@ -198,6 +198,8 @@ export const REDIS_KEYS = {
   /** Tracks a recent comment body hash for duplicate-body detection (Story 04). */
   recentBody: (authorName: string, hash: string) =>
     `spam:recentbody:${authorName.toLowerCase()}:${hash}`,
+  /** Deduplication flag for auto-removed comments (Story 07). */
+  removedComment: (commentId: string) => `removed:${commentId}`,
 } as const;
 
 /** Maximum body length stored in Redis to keep record sizes reasonable. */

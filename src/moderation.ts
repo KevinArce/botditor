@@ -1,5 +1,5 @@
 /**
- * Moderation Enforcement – Stories 03 / 04 / 06
+ * Moderation Enforcement – Stories 03 / 04 / 06 / 07
  *
  * After the AI analysis pipeline scores a comment, this module compares
  * scores against the pre-validated `ModerationRules` snapshot and takes
@@ -9,6 +9,11 @@
  * `ModerationRules` object loaded centrally by `rules.ts`, instead of
  * being read inline from settings. This eliminates duplicate reads and
  * guarantees both enforceToxicity and enforceSpam see the same config.
+ *
+ * Story 07 additions:
+ *   • Every removal is written to the mod log with a `botditor` details tag.
+ *   • Removed comment IDs are stored in Redis (`removed:<commentId>`) for
+ *     deduplication — prevents re-removal on event re-delivery.
  *
  * Fail-safe: on any error the function returns "none" — no exception
  * escapes.
@@ -21,6 +26,7 @@ import type {
   SpamResult,
   ModerationRules,
 } from "./types.js";
+import { REDIS_KEYS } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Toxicity enforcement (Story 03)
@@ -192,13 +198,39 @@ async function enforceSpamInner(
 // ---------------------------------------------------------------------------
 
 /**
- * Remove a comment and log the action to the mod log.
+ * Remove a comment, write to the mod log, and set a dedup key (Story 07).
+ *
+ * Deduplication: if `removed:<commentId>` already exists in Redis, the
+ * removal is skipped — prevents double-removal on event re-delivery.
+ *
+ * Mod log: every successful removal is recorded with a `botditor` details
+ * tag.  Mod-log failures are caught and logged — they never prevent the
+ * removal itself from being recorded as successful.
  */
 async function removeComment(
   record: IngestedComment,
   reason: string,
   context: TriggerContext
 ): Promise<ModerationAction> {
+  // ── Dedup check (Story 07) ────────────────────────────────────────
+  try {
+    const dedupKey = REDIS_KEYS.removedComment(record.commentId);
+    const alreadyRemoved = await context.redis.get(dedupKey);
+    if (alreadyRemoved) {
+      console.log(
+        `[moderation] Comment ${record.commentId} already auto-removed (dedup) — skipping`
+      );
+      return "none";
+    }
+  } catch (err) {
+    // Redis read failure should not block removal — continue
+    console.error(
+      `[moderation] Dedup check failed for ${record.commentId} — proceeding:`,
+      err instanceof Error ? err.message : err
+    );
+  }
+
+  // ── Remove the comment ────────────────────────────────────────────
   try {
     const comment = await context.reddit.getCommentById(record.commentId);
     await comment.remove();
@@ -218,6 +250,35 @@ async function removeComment(
       );
     }
     return "none";
+  }
+
+  // ── Write to mod log (Story 07) ───────────────────────────────────
+  // Note: `modLog` is omitted from `TriggerContext` types but available
+  // at runtime (same pattern as nuke.ts).  Cast to access safely.
+  try {
+    const ctx = context as unknown as { modLog: { add: (entry: Record<string, string>) => Promise<void> } };
+    await ctx.modLog.add({
+      action: "removecomment",
+      target: record.commentId,
+      details: "botditor",
+      description: reason,
+    });
+  } catch (err) {
+    console.error(
+      `[moderation] Failed to write mod log for ${record.commentId}:`,
+      err instanceof Error ? err.message : err
+    );
+  }
+
+  // ── Set dedup key (Story 07) ──────────────────────────────────────
+  try {
+    const dedupKey = REDIS_KEYS.removedComment(record.commentId);
+    await context.redis.set(dedupKey, "1");
+  } catch (err) {
+    console.error(
+      `[moderation] Failed to set dedup key for ${record.commentId}:`,
+      err instanceof Error ? err.message : err
+    );
   }
 
   return "removed";
