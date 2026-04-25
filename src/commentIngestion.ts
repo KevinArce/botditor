@@ -19,6 +19,7 @@ import { isUserAllowlisted } from "./allowlist.js";
 import { saveComment, updateCommentStatus } from "./commentStorage.js";
 import { analyzeComment } from "./ai.js";
 import { enforceToxicity, enforceSpam } from "./moderation.js";
+import { sendWarning } from "./warnings.js";
 import { computeSpamScore } from "./spam.js";
 import { loadModerationRules, logActiveRules } from "./rules.js";
 import type { IngestedComment, SkipReason, ModerationAction } from "./types.js";
@@ -183,6 +184,18 @@ export async function handleCommentSubmit(
       redis
     );
 
+    // ── 9b. Send warning PM on toxicity flag (Story 09) ────────────
+    if (toxAction === "flagged") {
+      const warnAction = await sendWarning(record, analysis.reason, rules, context);
+      if (warnAction === "warned") {
+        await updateCommentStatus(
+          commentId,
+          { moderationAction: "warned" },
+          redis
+        );
+      }
+    }
+
     // ── 10. Enforce spam thresholds (Story 04) ─────────────────────
     // Skip spam enforcement if toxicity already removed the comment
     let spamAction: ModerationAction = "none";
@@ -194,6 +207,19 @@ export async function handleCommentSubmit(
           { moderationAction: spamAction },
           redis
         );
+      }
+
+      // ── 10b. Send warning PM on spam flag (Story 09) ─────────────
+      if (spamAction === "spam_flagged") {
+        const reasonStr = spamResult.reasons.join("; ") || "spam heuristics";
+        const warnAction = await sendWarning(record, reasonStr, rules, context);
+        if (warnAction === "warned") {
+          await updateCommentStatus(
+            commentId,
+            { moderationAction: "warned" },
+            redis
+          );
+        }
       }
     }
 

@@ -85,9 +85,11 @@ export interface SpamResult {
 export type ModerationAction =
   | "removed"              // Auto-removed due to high toxicity
   | "flagged"              // Reported for manual review
+  | "warned"               // Warning PM sent to author (Story 09)
   | "none"                 // Below thresholds or error — no action
   | "dry_run_remove"       // Would remove, but dry-run is on
   | "dry_run_flag"         // Would flag, but dry-run is on
+  | "dry_run_warn"         // Would warn, but dry-run is on (Story 09)
   | "spam_removed"         // Auto-removed due to spam (Story 04)
   | "spam_flagged"         // Reported for spam review (Story 04)
   | "dry_run_spam_remove"  // Would spam-remove, but dry-run is on
@@ -175,6 +177,10 @@ export const SETTINGS = {
   BOT_FLAG_THRESHOLD: "botFlagThreshold",
   /** Moderation profile preset: "strict" or "chill" (Story 06 / 15). */
   MODERATION_PROFILE: "moderationProfile",
+  /** Warning PM template for strict profile (Story 09). */
+  WARNING_TEMPLATE_STRICT: "warningTemplateStrict",
+  /** Warning PM template for chill profile (Story 09). */
+  WARNING_TEMPLATE_CHILL: "warningTemplateChill",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -202,6 +208,8 @@ export const REDIS_KEYS = {
   removedComment: (commentId: string) => `removed:${commentId}`,
   /** Flagged-comment record for dedup + stats (Story 08). */
   flaggedComment: (commentId: string) => `flagged:${commentId}`,
+  /** Warning cooldown key per user (Story 09). */
+  warnedUser: (authorName: string) => `warned:${authorName.toLowerCase()}`,
 } as const;
 
 /** Maximum body length stored in Redis to keep record sizes reasonable. */
@@ -215,3 +223,6 @@ export const ANALYSIS_CACHE_TTL_MS = 3_600_000;
 
 /** Flag deduplication TTL — 24 hours in seconds (Story 08). */
 export const FLAG_DEDUP_TTL_S = 86_400;
+
+/** Warning cooldown TTL — 48 hours in seconds (Story 09). */
+export const WARNING_COOLDOWN_TTL_S = 172_800;

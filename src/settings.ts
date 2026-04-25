@@ -122,6 +122,38 @@ Devvit.addSettings([
     scope: SettingScope.Installation,
   },
 
+  // ── Warning message templates (Story 09) ────────────────────────────
+  {
+    type: "paragraph",
+    name: SETTINGS.WARNING_TEMPLATE_STRICT,
+    label: "Warning template (strict profile)",
+    helpText:
+      "PM body sent to users when their comment is flagged under the strict profile. " +
+      "Supports placeholders: {{username}}, {{issue}}, {{rulesLink}}.",
+    defaultValue:
+      "Hello u/{{username}},\n\n" +
+      "Your recent comment has been flagged by our moderation system for the following issue: **{{issue}}**.\n\n" +
+      "This is a formal notice that continued violations may result in further action. " +
+      "Please review our subreddit rules: {{rulesLink}}\n\n" +
+      "— The Moderation Team",
+    scope: SettingScope.Installation,
+  },
+  {
+    type: "paragraph",
+    name: SETTINGS.WARNING_TEMPLATE_CHILL,
+    label: "Warning template (chill profile)",
+    helpText:
+      "PM body sent to users when their comment is flagged under the chill profile. " +
+      "Supports placeholders: {{username}}, {{issue}}, {{rulesLink}}.",
+    defaultValue:
+      "Hey u/{{username}} 👋\n\n" +
+      "Just a heads-up — your comment was flagged for: **{{issue}}**.\n\n" +
+      "No worries, just keep our community guidelines in mind going forward! " +
+      "You can check them out here: {{rulesLink}}\n\n" +
+      "Thanks for being part of the community! ✌️",
+    scope: SettingScope.Installation,
+  },
+
   // ── Global (developer) settings ───────────────────────────────────
   {
     type: "string",
