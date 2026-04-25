@@ -102,6 +102,26 @@ Devvit.addSettings([
     scope: SettingScope.Installation,
   },
 
+  // ── Auto-moderation rules (Story 06) ───────────────────────────────
+  {
+    type: "number",
+    name: SETTINGS.BOT_FLAG_THRESHOLD,
+    label: "Bot-likelihood flag threshold",
+    helpText:
+      "Comments with a bot-likelihood score at or above this value are flagged for review.",
+    defaultValue: 0.75,
+    scope: SettingScope.Installation,
+  },
+  {
+    type: "string",
+    name: SETTINGS.MODERATION_PROFILE,
+    label: "Moderation profile",
+    helpText:
+      "Set to 'chill' (default) for relaxed thresholds, or 'strict' for aggressive moderation. Story 15 will add more presets.",
+    defaultValue: "chill",
+    scope: SettingScope.Installation,
+  },
+
   // ── Global (developer) settings ───────────────────────────────────
   {
     type: "string",

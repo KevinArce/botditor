@@ -1,37 +1,19 @@
 import { describe, it, expect, vi } from "vitest";
-import type { RedisClient, SettingsClient } from "@devvit/public-api";
+import type { SettingsClient } from "@devvit/public-api";
 import type { TriggerContext } from "@devvit/public-api";
 import { enforceToxicity } from "../moderation.js";
-import { SETTINGS } from "../types.js";
-import type { AnalysisResult, IngestedComment } from "../types.js";
+import { DEFAULT_RULES } from "../types.js";
+import type { AnalysisResult, IngestedComment, ModerationRules } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Mock factories
 // ---------------------------------------------------------------------------
 
-function createMockSettings(
-  values: Record<string, string | number | boolean | undefined> = {}
-): SettingsClient {
-  return {
-    get: vi.fn(async <T>(key: string) => {
-      return key in values ? (values[key] as T) : undefined;
-    }),
-    getAll: vi.fn(async () => values),
-  } as unknown as SettingsClient;
-}
-
 function createMockContext(overrides: {
-  settings?: SettingsClient;
   removeThrows?: boolean;
   removeFn?: ReturnType<typeof vi.fn>;
   reportFn?: ReturnType<typeof vi.fn>;
 } = {}): TriggerContext {
-  const settings = overrides.settings ?? createMockSettings({
-    [SETTINGS.TOXICITY_REMOVE_THRESHOLD]: 0.85,
-    [SETTINGS.TOXICITY_FLAG_THRESHOLD]: 0.60,
-    [SETTINGS.DRY_RUN]: false,
-  });
-
   const removeFn = overrides.removeFn ?? (overrides.removeThrows
     ? vi.fn().mockRejectedValue(new Error("404 not found"))
     : vi.fn().mockResolvedValue(undefined));
@@ -44,7 +26,6 @@ function createMockContext(overrides: {
   };
 
   return {
-    settings,
     reddit: {
       getCommentById: vi.fn().mockResolvedValue(mockComment),
       report: reportFn,
@@ -77,6 +58,10 @@ function makeAnalysis(overrides: Partial<AnalysisResult> = {}): AnalysisResult {
   };
 }
 
+function makeRules(overrides: Partial<ModerationRules> = {}): ModerationRules {
+  return { ...DEFAULT_RULES, ...overrides };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -89,7 +74,7 @@ describe("enforceToxicity", () => {
     const record = makeRecord();
     const analysis = makeAnalysis({ toxicityScore: 0.90 });
 
-    const action = await enforceToxicity(record, analysis, context);
+    const action = await enforceToxicity(record, analysis, makeRules(), context);
 
     expect(action).toBe("removed");
     const comment = await (context.reddit.getCommentById as ReturnType<typeof vi.fn>).mock.results[0].value;
@@ -101,7 +86,7 @@ describe("enforceToxicity", () => {
     const record = makeRecord();
     const analysis = makeAnalysis({ toxicityScore: 0.85 });
 
-    const action = await enforceToxicity(record, analysis, context);
+    const action = await enforceToxicity(record, analysis, makeRules(), context);
     expect(action).toBe("removed");
   });
 
@@ -112,7 +97,7 @@ describe("enforceToxicity", () => {
     const record = makeRecord();
     const analysis = makeAnalysis({ toxicityScore: 0.70 });
 
-    const action = await enforceToxicity(record, analysis, context);
+    const action = await enforceToxicity(record, analysis, makeRules(), context);
 
     expect(action).toBe("flagged");
     expect(context.reddit.report).toHaveBeenCalled();
@@ -123,7 +108,7 @@ describe("enforceToxicity", () => {
     const record = makeRecord();
     const analysis = makeAnalysis({ toxicityScore: 0.60 });
 
-    const action = await enforceToxicity(record, analysis, context);
+    const action = await enforceToxicity(record, analysis, makeRules(), context);
     expect(action).toBe("flagged");
   });
 
@@ -134,7 +119,7 @@ describe("enforceToxicity", () => {
     const record = makeRecord();
     const analysis = makeAnalysis({ toxicityScore: 0.30 });
 
-    const action = await enforceToxicity(record, analysis, context);
+    const action = await enforceToxicity(record, analysis, makeRules(), context);
     expect(action).toBe("none");
   });
 
@@ -143,41 +128,39 @@ describe("enforceToxicity", () => {
     const record = makeRecord();
     const analysis = makeAnalysis({ toxicityScore: 0 });
 
-    const action = await enforceToxicity(record, analysis, context);
+    const action = await enforceToxicity(record, analysis, makeRules(), context);
     expect(action).toBe("none");
   });
 
   // ── Dry-run mode ──────────────────────────────────────────────────
 
   it("returns dry_run_remove in dry-run mode when above remove threshold", async () => {
-    const context = createMockContext({
-      settings: createMockSettings({
-        [SETTINGS.TOXICITY_REMOVE_THRESHOLD]: 0.85,
-        [SETTINGS.TOXICITY_FLAG_THRESHOLD]: 0.60,
-        [SETTINGS.DRY_RUN]: true,
-      }),
-    });
+    const context = createMockContext();
     const record = makeRecord();
     const analysis = makeAnalysis({ toxicityScore: 0.95 });
 
-    const action = await enforceToxicity(record, analysis, context);
+    const action = await enforceToxicity(
+      record,
+      analysis,
+      makeRules({ dryRun: true }),
+      context
+    );
     expect(action).toBe("dry_run_remove");
     // Should NOT have called remove
     expect(context.reddit.getCommentById).not.toHaveBeenCalled();
   });
 
   it("returns dry_run_flag in dry-run mode when above flag threshold", async () => {
-    const context = createMockContext({
-      settings: createMockSettings({
-        [SETTINGS.TOXICITY_REMOVE_THRESHOLD]: 0.85,
-        [SETTINGS.TOXICITY_FLAG_THRESHOLD]: 0.60,
-        [SETTINGS.DRY_RUN]: true,
-      }),
-    });
+    const context = createMockContext();
     const record = makeRecord();
     const analysis = makeAnalysis({ toxicityScore: 0.70 });
 
-    const action = await enforceToxicity(record, analysis, context);
+    const action = await enforceToxicity(
+      record,
+      analysis,
+      makeRules({ dryRun: true }),
+      context
+    );
     expect(action).toBe("dry_run_flag");
     expect(context.reddit.report).not.toHaveBeenCalled();
   });
@@ -189,7 +172,7 @@ describe("enforceToxicity", () => {
     const record = makeRecord();
     const analysis = makeAnalysis({ toxicityScore: 0.95 });
 
-    const action = await enforceToxicity(record, analysis, context);
+    const action = await enforceToxicity(record, analysis, makeRules(), context);
     expect(action).toBe("none");
   });
 
@@ -199,36 +182,32 @@ describe("enforceToxicity", () => {
     const record = makeRecord();
     const analysis = makeAnalysis({ toxicityScore: 0.70 });
 
-    const action = await enforceToxicity(record, analysis, context);
+    const action = await enforceToxicity(record, analysis, makeRules(), context);
     expect(action).toBe("none");
   });
 
   // ── Custom thresholds ─────────────────────────────────────────────
 
-  it("respects custom thresholds from settings", async () => {
-    const context = createMockContext({
-      settings: createMockSettings({
-        [SETTINGS.TOXICITY_REMOVE_THRESHOLD]: 0.50,
-        [SETTINGS.TOXICITY_FLAG_THRESHOLD]: 0.20,
-        [SETTINGS.DRY_RUN]: false,
-      }),
-    });
+  it("respects custom thresholds from rules", async () => {
+    const context = createMockContext();
     const record = makeRecord();
+    const rules = makeRules({
+      toxicityRemoveThreshold: 0.50,
+      toxicityFlagThreshold: 0.20,
+    });
 
     // Score of 0.55 should trigger remove with threshold 0.50
-    const action1 = await enforceToxicity(record, makeAnalysis({ toxicityScore: 0.55 }), context);
-    expect(action1).toBe("removed");
+    const action = await enforceToxicity(record, makeAnalysis({ toxicityScore: 0.55 }), rules, context);
+    expect(action).toBe("removed");
   });
 
-  it("uses defaults when settings are not configured", async () => {
-    const context = createMockContext({
-      settings: createMockSettings({}), // no settings set
-    });
+  it("uses defaults when rules have default values", async () => {
+    const context = createMockContext();
     const record = makeRecord();
     const analysis = makeAnalysis({ toxicityScore: 0.30 });
 
     // Should fall through to "none" with default thresholds (0.85/0.60)
-    const action = await enforceToxicity(record, analysis, context);
+    const action = await enforceToxicity(record, analysis, makeRules(), context);
     expect(action).toBe("none");
   });
 });

@@ -20,6 +20,7 @@ import { saveComment, updateCommentStatus } from "./commentStorage.js";
 import { analyzeComment } from "./ai.js";
 import { enforceToxicity, enforceSpam } from "./moderation.js";
 import { computeSpamScore } from "./spam.js";
+import { loadModerationRules, logActiveRules } from "./rules.js";
 import type { IngestedComment, SkipReason, ModerationAction } from "./types.js";
 import { SETTINGS, MAX_BODY_LENGTH } from "./types.js";
 import type { RedisClient } from "@devvit/public-api";
@@ -40,6 +41,10 @@ export async function handleCommentSubmit(
     console.log("[ingestion] Botditor is disabled for this subreddit — no-op");
     return;
   }
+
+  // ── 1b. Load validated moderation rules (Story 06) ───────────────
+  const rules = await loadModerationRules(settings);
+  logActiveRules(rules);
 
   // ── 2. Extract event payload ─────────────────────────────────────
   const comment = event.comment;
@@ -171,7 +176,7 @@ export async function handleCommentSubmit(
     );
 
     // ── 9. Enforce toxicity thresholds (Story 03) ──────────────────
-    const toxAction = await enforceToxicity(record, analysis, context);
+    const toxAction = await enforceToxicity(record, analysis, rules, context);
     await updateCommentStatus(
       commentId,
       { moderationAction: toxAction },
@@ -182,7 +187,7 @@ export async function handleCommentSubmit(
     // Skip spam enforcement if toxicity already removed the comment
     let spamAction: ModerationAction = "none";
     if (toxAction !== "removed") {
-      spamAction = await enforceSpam(record, spamResult, context);
+      spamAction = await enforceSpam(record, spamResult, rules, context);
       if (spamAction !== "none") {
         await updateCommentStatus(
           commentId,

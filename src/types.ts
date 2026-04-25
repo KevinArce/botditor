@@ -31,6 +31,39 @@ export const ANALYSIS_FALLBACK: AnalysisResult = {
 };
 
 // ---------------------------------------------------------------------------
+// Moderation rules (Story 06 – Auto-Moderation Rules)
+// ---------------------------------------------------------------------------
+
+/** Moderation profile preset. */
+export type ModerationProfile = "strict" | "chill";
+
+/** Validated, centralised snapshot of all moderation settings. */
+export interface ModerationRules {
+  enabled: boolean;
+  dryRun: boolean;
+  moderationProfile: ModerationProfile;
+  toxicityRemoveThreshold: number;
+  toxicityFlagThreshold: number;
+  spamRemoveThreshold: number;
+  spamFlagThreshold: number;
+  spamMode: string;
+  botFlagThreshold: number;
+}
+
+/** Safe defaults — used when settings are missing or invalid. */
+export const DEFAULT_RULES: Readonly<ModerationRules> = {
+  enabled: true,
+  dryRun: false,
+  moderationProfile: "chill",
+  toxicityRemoveThreshold: 0.85,
+  toxicityFlagThreshold: 0.60,
+  spamRemoveThreshold: 0.80,
+  spamFlagThreshold: 0.50,
+  spamMode: "flag",
+  botFlagThreshold: 0.75,
+};
+
+// ---------------------------------------------------------------------------
 // Spam result (produced by Story 04 – Spam Detection)
 // ---------------------------------------------------------------------------
 
@@ -138,6 +171,10 @@ export const SETTINGS = {
   SPAM_MODE: "spamMode",
   /** Comma-separated blocked domains — instant removal (Story 04). */
   SPAM_BLOCKED_DOMAINS: "spamBlockedDomains",
+  /** Bot-likelihood score above which comments are flagged for review (Story 06). */
+  BOT_FLAG_THRESHOLD: "botFlagThreshold",
+  /** Moderation profile preset: "strict" or "chill" (Story 06 / 15). */
+  MODERATION_PROFILE: "moderationProfile",
 } as const;
 
 // ---------------------------------------------------------------------------

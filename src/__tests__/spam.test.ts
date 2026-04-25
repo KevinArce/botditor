@@ -9,8 +9,8 @@ import {
   simpleHash,
 } from "../spam.js";
 import { enforceSpam } from "../moderation.js";
-import { SETTINGS } from "../types.js";
-import type { IngestedComment, SpamResult } from "../types.js";
+import { SETTINGS, DEFAULT_RULES } from "../types.js";
+import type { IngestedComment, SpamResult, ModerationRules } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -97,6 +97,10 @@ function makeRecord(overrides: Partial<IngestedComment> = {}): IngestedComment {
     status: "analyzed",
     ...overrides,
   };
+}
+
+function makeRules(overrides: Partial<ModerationRules> = {}): ModerationRules {
+  return { ...DEFAULT_RULES, ...overrides };
 }
 
 // ---------------------------------------------------------------------------
@@ -333,7 +337,7 @@ describe("enforceSpam", () => {
       blockedDomain: false,
     };
 
-    const action = await enforceSpam(record, spamResult, context);
+    const action = await enforceSpam(record, spamResult, makeRules(), context);
     expect(action).toBe("spam_flagged");
     expect(context.reddit.report).toHaveBeenCalled();
   });
@@ -348,7 +352,7 @@ describe("enforceSpam", () => {
     };
 
     // In flag mode, should flag, not remove
-    const action = await enforceSpam(record, spamResult, context);
+    const action = await enforceSpam(record, spamResult, makeRules(), context);
     expect(action).toBe("spam_flagged");
   });
 
@@ -368,7 +372,7 @@ describe("enforceSpam", () => {
       blockedDomain: false,
     };
 
-    const action = await enforceSpam(record, spamResult, context);
+    const action = await enforceSpam(record, spamResult, makeRules({ spamMode: "remove" }), context);
     expect(action).toBe("spam_removed");
   });
 
@@ -386,7 +390,7 @@ describe("enforceSpam", () => {
       blockedDomain: true,
     };
 
-    const action = await enforceSpam(record, spamResult, context);
+    const action = await enforceSpam(record, spamResult, makeRules(), context);
     expect(action).toBe("spam_removed");
   });
 
@@ -406,7 +410,7 @@ describe("enforceSpam", () => {
       blockedDomain: false,
     };
 
-    const action = await enforceSpam(record, spamResult, context);
+    const action = await enforceSpam(record, spamResult, makeRules({ spamMode: "remove", dryRun: true }), context);
     expect(action).toBe("dry_run_spam_remove");
     expect(context.reddit.getCommentById).not.toHaveBeenCalled();
   });
@@ -427,7 +431,7 @@ describe("enforceSpam", () => {
       blockedDomain: false,
     };
 
-    const action = await enforceSpam(record, spamResult, context);
+    const action = await enforceSpam(record, spamResult, makeRules({ dryRun: true }), context);
     expect(action).toBe("dry_run_spam_flag");
     expect(context.reddit.report).not.toHaveBeenCalled();
   });
@@ -441,7 +445,7 @@ describe("enforceSpam", () => {
       blockedDomain: false,
     };
 
-    const action = await enforceSpam(record, spamResult, context);
+    const action = await enforceSpam(record, spamResult, makeRules(), context);
     expect(action).toBe("none");
   });
 
@@ -459,7 +463,7 @@ describe("enforceSpam", () => {
       blockedDomain: false,
     };
 
-    const action = await enforceSpam(record, spamResult, context);
+    const action = await enforceSpam(record, spamResult, makeRules(), context);
     expect(action).toBe("none");
   });
 });

@@ -1,6 +1,6 @@
 # Story 06: Auto-Moderation Rules
 
-Status: ✅ Keep & Enrich
+Status: ✅ Implemented
 
 Feature area: Core Moderation
 
