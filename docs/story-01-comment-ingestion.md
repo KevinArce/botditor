@@ -75,7 +75,7 @@ CommentSubmit event
   - `{ name: 'allowlistUsernames', type: 'string', label: 'Allowlisted usernames (comma-separated)', scope: 'installation' }`
   - `{ name: 'allowlistDomains', type: 'string', label: 'Allowlisted domains (comma-separated)', scope: 'installation' }`
   - `{ name: 'geminiApiKey', type: 'string', isSecret: true, scope: 'app' }`
-  - `{ name: 'geminiModel', type: 'string', defaultValue: 'gemini-1.5-flash', scope: 'app' }`
+  - `{ name: 'geminiModel', type: 'string', defaultValue: DEFAULT_GEMINI_MODEL, scope: 'app' }` (see Story 02)
 - `context.settings.get('botditorEnabled')`
 - `context.redis.get / set / del / zAdd / zRange / incrBy`
 - `context.reddit.getAppUser()`
@@ -102,4 +102,6 @@ CommentSubmit event
 | No data persistence specified | Full Redis-backed `IngestedComment` records | Needed for Story 02 pipeline handoff, duplicate detection, and future analytics (Stories 13, 14, 20) |
 | Allow-list check mentioned but undefined | Full allowlist service with Redis + settings sources | Partial Story 23 implementation to unblock Story 01 |
 
-Dependencies: Story 02 (AI Analysis Pipeline) must be implemented before automated actions take effect. The ingestion handler currently sets status to `"processing"` and leaves a TODO stub for the analysis call.
+Dependencies: Story 02 (AI Analysis Pipeline) must be implemented before automated actions take effect. *(Done: the handler now runs the full pipeline — AI analysis, spam heuristics, toxicity/spam enforcement, warnings. See [ARCHITECTURE.md §4](./ARCHITECTURE.md).)*
+
+Open question (2026-09-10, [BACKLOG COR-1](./BACKLOG.md)): `authorName` is read from `event.comment.author`. `warnings.ts` suspects this can be a `t2_` user ID; `event.author.name` is unambiguously the username. Verify in a playtest before relying on username-keyed features (allow-list, account-age heuristic, warning cooldown).

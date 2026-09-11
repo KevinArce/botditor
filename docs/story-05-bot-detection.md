@@ -1,6 +1,8 @@
 # Story 05: Bot Detection
 
-Status: ⚠️ Scope Down — full account-history bot detection is not practical within Devvit's per-event execution model; scoped to behavioral signals from recent comment activity only.
+Status: ⬜ Not started (scoped down) — full account-history bot detection is not practical within Devvit's per-event execution model; scoped to behavioral signals from recent comment activity only.
+
+Current state (2026-09-10): Gemini's `botLikelihood` is stored on each comment record and the `botFlagThreshold` setting (default 0.75) is registered and loaded by `rules.ts`, but nothing enforces it — moderators can edit a setting that has no effect. The behavioural heuristics below aren't implemented.
 
 Feature area: Core Moderation
 

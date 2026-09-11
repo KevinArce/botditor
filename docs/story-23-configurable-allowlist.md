@@ -1,6 +1,8 @@
 # Story 23: Configurable Allow-list (Gap Story)
 
-Status: ✅ New — identified via gap analysis; false positives from trusted contributors are a core risk for any automated moderation tool, and no existing story addresses suppressing them.
+Status: ✅ Done for comments (verified 2026-09-10) — `src/allowlist.ts` checks Redis keys plus the `allowlistUsernames` setting with an implicit self-allowlist and fail-open reads. `allowlistDomains` suppresses the URL-count spam heuristic. Menu actions add/remove authors. The post path arrives with Story 19. Uses Redis, not `kvStore` (removed in Devvit 0.13).
+
+Original rationale: identified via gap analysis; false positives from trusted contributors are a core risk for any automated moderation tool, and no existing story addresses suppressing them.
 
 Feature area: Core Moderation
 
