@@ -224,6 +224,24 @@ export const MAX_BODY_LENGTH = 4000;
 /** Maximum body length sent to the Gemini prompt (Story 02). */
 export const MAX_PROMPT_BODY_LENGTH = 8000;
 
+/**
+ * Default Gemini model (Story 02). Single source of truth for both the
+ * registered setting default (settings.ts) and the runtime fallback (ai.ts).
+ * Devvit always returns a setting's registered default, so a divergent
+ * fallback elsewhere never runs — that is how the retired
+ * `gemini-1.5-flash` (shut down 2025-09-29) silently zeroed every score.
+ */
+export const DEFAULT_GEMINI_MODEL = "gemini-3.6-flash";
+
+/** Host for all Gemini API calls; declared in `Devvit.configure({ http })`. */
+export const GEMINI_API_HOST = "generativelanguage.googleapis.com";
+
+/**
+ * Gemini request timeout in milliseconds (Story 02). Devvit itself aborts
+ * HTTP fetches after 30 s; failing earlier keeps the trigger responsive.
+ */
+export const GEMINI_TIMEOUT_MS = 10_000;
+
 /** Cache TTL for analysis results — 1 hour in milliseconds (Story 02). */
 export const ANALYSIS_CACHE_TTL_MS = 3_600_000;
 

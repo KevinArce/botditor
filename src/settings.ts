@@ -5,7 +5,7 @@
  * Imported once in main.ts so settings are registered at app boot.
  */
 import { Devvit, SettingScope } from "@devvit/public-api";
-import { SETTINGS } from "./types.js";
+import { SETTINGS, DEFAULT_GEMINI_MODEL } from "./types.js";
 
 Devvit.addSettings([
   // ── Per-installation (subreddit) settings ─────────────────────────
@@ -166,7 +166,9 @@ Devvit.addSettings([
     type: "string",
     name: SETTINGS.GEMINI_MODEL,
     label: "Gemini Model",
-    defaultValue: "gemini-1.5-flash",
+    helpText:
+      "Gemini model ID. A retired or unknown model makes every analysis fall back to zero scores (no moderation).",
+    defaultValue: DEFAULT_GEMINI_MODEL,
     scope: SettingScope.App,
   },
 ]);
