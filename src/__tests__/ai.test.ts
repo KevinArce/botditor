@@ -72,6 +72,15 @@ function makeRecord(overrides: Partial<IngestedComment> = {}): IngestedComment {
   };
 }
 
+function geminiOk(text: string): Response {
+  return {
+    ok: true,
+    status: 200,
+    text: async () =>
+      JSON.stringify({ candidates: [{ content: { parts: [{ text }] } }] }),
+  } as unknown as Response;
+}
+
 // ---------------------------------------------------------------------------
 // Tests – isEmojiOnly
 // ---------------------------------------------------------------------------
@@ -464,15 +473,6 @@ describe("analyzeComment — Gemini request", () => {
     reason: "fine",
   };
 
-  function geminiOk(text: string) {
-    return {
-      ok: true,
-      status: 200,
-      text: async () =>
-        JSON.stringify({ candidates: [{ content: { parts: [{ text }] } }] }),
-    };
-  }
-
   function contextWithKey(
     extra: Record<string, string> = {},
     redis = createMockRedis()
@@ -574,5 +574,142 @@ describe("analyzeComment — Gemini request", () => {
     const logged = spies.flatMap((spy) => spy.mock.calls.flat()).map(String).join("\n");
     expect(logged).not.toContain(secretBody);
     expect(logged).not.toContain("test-key");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests – Provider routing & Dual-Run mode
+// ---------------------------------------------------------------------------
+
+describe("analyzeComment provider routing", () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("routes to Jev when AI_PROVIDER is 'jev'", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          toxicityScore: 0.9,
+          spamScore: 0.1,
+          botLikelihood: 0.05,
+          sentiment: "negative",
+          reason: "jev flagged",
+        }),
+    } as Response);
+    globalThis.fetch = fetchMock;
+
+    const context = createMockContext({
+      settings: createMockSettings({
+        [SETTINGS.AI_PROVIDER]: "jev",
+        [SETTINGS.JEV_API_KEY]: "jev-secret",
+      }),
+    });
+
+    const result = await analyzeComment(makeRecord(), context);
+    expect(result.toxicityScore).toBe(0.9);
+    expect(result.reason).toBe("jev flagged");
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("typesafe.ai"),
+      expect.anything()
+    );
+  });
+
+  it("falls back to Gemini if Jev fails when AI_PROVIDER is 'jev'", async () => {
+    const fetchMock = vi
+      .fn()
+      // First call (Jev) fails with 500
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: async () => "Internal Server Error",
+      } as Response)
+      // Second call (Gemini fallback) succeeds
+      .mockResolvedValueOnce(
+        geminiOk(
+          JSON.stringify({
+            toxicityScore: 0.7,
+            spamScore: 0.1,
+            botLikelihood: 0.2,
+            sentiment: "neutral",
+            reason: "gemini fallback response",
+          })
+        )
+      );
+    globalThis.fetch = fetchMock;
+
+    const context = createMockContext({
+      settings: createMockSettings({
+        [SETTINGS.AI_PROVIDER]: "jev",
+        [SETTINGS.JEV_API_KEY]: "jev-secret",
+        [SETTINGS.GEMINI_API_KEY]: "gemini-key",
+      }),
+    });
+
+    const result = await analyzeComment(makeRecord(), context);
+    expect(result.toxicityScore).toBe(0.7);
+    expect(result.reason).toBe("gemini fallback response");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("executes dual-run mode and logs comparison into Redis", async () => {
+    const fetchMock = vi.fn((url: string | URL | Request) => {
+      const urlStr = url.toString();
+      if (urlStr.includes("typesafe.ai")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              toxicityScore: 0.85,
+              spamScore: 0.1,
+              botLikelihood: 0.05,
+              sentiment: "negative",
+              reason: "jev detection",
+            }),
+        } as Response);
+      }
+      return Promise.resolve(
+        geminiOk(
+          JSON.stringify({
+            toxicityScore: 0.8,
+            spamScore: 0.15,
+            botLikelihood: 0.1,
+            sentiment: "negative",
+            reason: "gemini detection",
+          })
+        )
+      );
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const redis = createMockRedis();
+    const context = createMockContext({
+      redis,
+      settings: createMockSettings({
+        [SETTINGS.AI_PROVIDER]: "dual_run",
+        [SETTINGS.JEV_API_KEY]: "jev-secret",
+        [SETTINGS.GEMINI_API_KEY]: "gemini-key",
+      }),
+    });
+
+    const result = await analyzeComment(makeRecord(), context);
+    expect(result.toxicityScore).toBe(0.85); // Returns Jev fast result
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // Verify benchmark record in Redis
+    const comparisonKey = REDIS_KEYS.jevComparison("t1_test123");
+    expect(redis.set).toHaveBeenCalledWith(
+      comparisonKey,
+      expect.stringContaining('"toxicityDelta":0.05')
+    );
   });
 });

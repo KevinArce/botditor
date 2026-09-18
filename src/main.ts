@@ -9,7 +9,7 @@ import {
   removeUserFromAllowlist,
   isUserAllowlisted,
 } from "./allowlist.js";
-import { GEMINI_API_HOST } from "./types.js";
+import { GEMINI_API_HOST, DEFAULT_JEV_API_HOST } from "./types.js";
 
 // Register all app settings (must be imported before Devvit.configure)
 import "./settings.js";
@@ -18,8 +18,8 @@ Devvit.configure({
   redditAPI: true,
   redis: true,
   // Devvit requires every fetched domain to be requested explicitly, even
-  // ones on its global allow-list (Story 02 — Gemini API).
-  http: { domains: [GEMINI_API_HOST] },
+  // ones on its global allow-list (Gemini API & TypeSafe Jev API).
+  http: { domains: [GEMINI_API_HOST, DEFAULT_JEV_API_HOST] },
 });
 
 // ---------------------------------------------------------------------------

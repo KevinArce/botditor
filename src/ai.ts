@@ -17,7 +17,13 @@
  *   • Comment bodies and raw model output are never logged.
  */
 import type { TriggerContext } from "@devvit/public-api";
-import type { IngestedComment, AnalysisResult, Sentiment } from "./types.js";
+import type {
+  IngestedComment,
+  AnalysisResult,
+  Sentiment,
+  AIProvider,
+  DualRunBenchmarkRecord,
+} from "./types.js";
 import {
   ANALYSIS_FALLBACK,
   REDIS_KEYS,
@@ -27,19 +33,137 @@ import {
   DEFAULT_GEMINI_MODEL,
   GEMINI_API_HOST,
   GEMINI_TIMEOUT_MS,
+  DEFAULT_AI_PROVIDER,
 } from "./types.js";
+import { analyzeCommentWithJev } from "./jev.js";
 
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
 /**
- * Analyze a comment via the Gemini API.
+ * Analyze a comment via the configured AI provider (Gemini, Jev, or Dual-Run).
  *
  * Always returns a valid `AnalysisResult`. On any error the safe fallback is
  * returned and the issue is logged — no exception escapes.
  */
 export async function analyzeComment(
+  record: IngestedComment,
+  context: TriggerContext
+): Promise<AnalysisResult> {
+  try {
+    const provider =
+      (await context.settings.get<AIProvider>(SETTINGS.AI_PROVIDER)) ||
+      DEFAULT_AI_PROVIDER;
+
+    if (provider === "jev") {
+      const jevResult = await analyzeCommentWithJev(record, context);
+      // Fallback to Gemini if Jev fails or is unconfigured
+      if (
+        jevResult.reason.includes("error") ||
+        jevResult.reason.includes("unavailable") ||
+        jevResult.reason.includes("no jev api key")
+      ) {
+        console.warn(
+          `[ai] Jev analysis failed (${jevResult.reason}) — falling back to Gemini`
+        );
+        return await analyzeCommentWithGemini(record, context);
+      }
+      return jevResult;
+    }
+
+    if (provider === "dual_run") {
+      return await analyzeDualRun(record, context);
+    }
+
+    return await analyzeCommentWithGemini(record, context);
+  } catch (err) {
+    console.error(
+      `[ai] Unexpected error in analyzeComment router for ${record.commentId}:`,
+      err instanceof Error ? err.message : err
+    );
+    return { ...ANALYSIS_FALLBACK, reason: "unexpected error" };
+  }
+}
+
+/**
+ * Run both Jev and Gemini in parallel, storing comparison metrics in Redis.
+ */
+async function analyzeDualRun(
+  record: IngestedComment,
+  context: TriggerContext
+): Promise<AnalysisResult> {
+  const { redis } = context;
+  const t0 = Date.now();
+
+  const [jevOutcome, geminiOutcome] = await Promise.allSettled([
+    analyzeCommentWithJev(record, context),
+    analyzeCommentWithGemini(record, context),
+  ]);
+
+  const jevResult =
+    jevOutcome.status === "fulfilled"
+      ? jevOutcome.value
+      : { ...ANALYSIS_FALLBACK, reason: "jev failed" };
+  const geminiResult =
+    geminiOutcome.status === "fulfilled"
+      ? geminiOutcome.value
+      : { ...ANALYSIS_FALLBACK, reason: "gemini failed" };
+
+  const durationMs = Date.now() - t0;
+  console.log(
+    `[dual_run] Benchmark for ${record.commentId}: ` +
+    `Jev(tox=${jevResult.toxicityScore}, spam=${jevResult.spamScore}) vs ` +
+    `Gemini(tox=${geminiResult.toxicityScore}, spam=${geminiResult.spamScore}) in ${durationMs}ms`
+  );
+
+  try {
+    const benchRecord: DualRunBenchmarkRecord = {
+      commentId: record.commentId,
+      timestamp: new Date().toISOString(),
+      jev: {
+        latencyMs: 0,
+        toxicityScore: jevResult.toxicityScore,
+        spamScore: jevResult.spamScore,
+        botLikelihood: jevResult.botLikelihood,
+        sentiment: jevResult.sentiment,
+        reason: jevResult.reason,
+      },
+      gemini: {
+        latencyMs: durationMs,
+        toxicityScore: geminiResult.toxicityScore,
+        spamScore: geminiResult.spamScore,
+        botLikelihood: geminiResult.botLikelihood,
+        sentiment: geminiResult.sentiment,
+        reason: geminiResult.reason,
+      },
+      toxicityDelta: Number(
+        Math.abs(jevResult.toxicityScore - geminiResult.toxicityScore).toFixed(4)
+      ),
+      latencyDiffMs: 0,
+    };
+    const key = REDIS_KEYS.jevComparison(record.commentId);
+    await redis.set(key, JSON.stringify(benchRecord));
+    await redis.expire(key, Math.floor(ANALYSIS_CACHE_TTL_MS / 1000));
+  } catch (err) {
+    console.warn(`[dual_run] Failed to cache comparison:`, err);
+  }
+
+  // Use Jev result if valid, otherwise fallback to Gemini
+  if (
+    jevResult.reason.includes("error") ||
+    jevResult.reason.includes("unavailable") ||
+    jevResult.reason.includes("no jev api key")
+  ) {
+    return geminiResult;
+  }
+  return jevResult;
+}
+
+/**
+ * Analyze a comment via the Gemini API.
+ */
+export async function analyzeCommentWithGemini(
   record: IngestedComment,
   context: TriggerContext
 ): Promise<AnalysisResult> {
@@ -343,7 +467,7 @@ export function parseAnalysisResponse(raw: string): AnalysisResult {
 /**
  * Validate a score is a number in 0–1 range. Returns null on failure.
  */
-function validateScore(value: unknown): number | null {
+export function validateScore(value: unknown): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
   return Math.max(0, Math.min(1, value));
 }
@@ -351,7 +475,7 @@ function validateScore(value: unknown): number | null {
 /**
  * Validate a sentiment string. Returns null on failure.
  */
-function validateSentiment(value: unknown): Sentiment | null {
+export function validateSentiment(value: unknown): Sentiment | null {
   if (value === "positive" || value === "neutral" || value === "negative") {
     return value;
   }
@@ -363,14 +487,14 @@ function validateSentiment(value: unknown): Sentiment | null {
 // ---------------------------------------------------------------------------
 
 /** Rejection reason used by `withTimeout`. */
-class TimeoutError extends Error {}
+export class TimeoutError extends Error {}
 
 /**
  * Settle with `promise`, or reject with a `TimeoutError` after `ms`.
  * Devvit's fetch polyfill ignores `AbortSignal`, so racing is the only way
  * to bound the wait (the underlying request still ends at Devvit's 30 s cap).
  */
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(

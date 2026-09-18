@@ -6,8 +6,11 @@
  */
 
 // ---------------------------------------------------------------------------
-// Analysis result (produced by Story 02 – AI Analysis Pipeline)
+// AI Provider & Analysis result (produced by Story 02 / Jev Integration)
 // ---------------------------------------------------------------------------
+
+/** Supported AI model providers for comment analysis. */
+export type AIProvider = "gemini" | "jev" | "dual_run";
 
 /** Sentiment label returned by the AI model. */
 export type Sentiment = "positive" | "neutral" | "negative";
@@ -181,6 +184,14 @@ export const SETTINGS = {
   WARNING_TEMPLATE_STRICT: "warningTemplateStrict",
   /** Warning PM template for chill profile (Story 09). */
   WARNING_TEMPLATE_CHILL: "warningTemplateChill",
+  /** Active AI Provider: "gemini" | "jev" | "dual_run" */
+  AI_PROVIDER: "aiProvider",
+  /** TypeSafe Jev API Key (global secret). */
+  JEV_API_KEY: "jevApiKey",
+  /** TypeSafe Jev API Host. */
+  JEV_API_HOST: "jevApiHost",
+  /** TypeSafe Jev Model name or checkpoint. */
+  JEV_MODEL: "jevModel",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -216,6 +227,8 @@ export const REDIS_KEYS = {
   /** Counter of total bans executed per subreddit (Story 10 / 14). */
   banCount: (subredditName: string) =>
     `bans:count:${subredditName.toLowerCase()}`,
+  /** Side-by-side comparison between Jev and Gemini in dual-run mode. */
+  jevComparison: (commentId: string) => `bench:jev_vs_gemini:${commentId}`,
 } as const;
 
 /** Maximum body length stored in Redis to keep record sizes reasonable. */
@@ -223,6 +236,9 @@ export const MAX_BODY_LENGTH = 4000;
 
 /** Maximum body length sent to the Gemini prompt (Story 02). */
 export const MAX_PROMPT_BODY_LENGTH = 8000;
+
+/** Default AI provider for comment analysis. */
+export const DEFAULT_AI_PROVIDER: AIProvider = "gemini";
 
 /**
  * Default Gemini model (Story 02). Single source of truth for both the
@@ -242,6 +258,17 @@ export const GEMINI_API_HOST = "generativelanguage.googleapis.com";
  */
 export const GEMINI_TIMEOUT_MS = 10_000;
 
+/** Default TypeSafe Jev API host. */
+export const DEFAULT_JEV_API_HOST = "api.typesafe.ai";
+
+/** Default TypeSafe Jev model name. */
+export const DEFAULT_JEV_MODEL = "jev-1";
+
+/**
+ * Jev request timeout in milliseconds. Designed for sub-second responses.
+ */
+export const JEV_TIMEOUT_MS = 3_000;
+
 /** Cache TTL for analysis results — 1 hour in milliseconds (Story 02). */
 export const ANALYSIS_CACHE_TTL_MS = 3_600_000;
 
@@ -250,3 +277,28 @@ export const FLAG_DEDUP_TTL_S = 86_400;
 
 /** Warning cooldown TTL — 48 hours in seconds (Story 09). */
 export const WARNING_COOLDOWN_TTL_S = 172_800;
+
+/** Structured dual-run benchmark comparison data. */
+export interface DualRunBenchmarkRecord {
+  commentId: string;
+  timestamp: string;
+  jev: {
+    latencyMs: number;
+    toxicityScore: number;
+    spamScore: number;
+    botLikelihood: number;
+    sentiment: Sentiment;
+    reason: string;
+  };
+  gemini: {
+    latencyMs: number;
+    toxicityScore: number;
+    spamScore: number;
+    botLikelihood: number;
+    sentiment: Sentiment;
+    reason: string;
+  };
+  toxicityDelta: number;
+  latencyDiffMs: number;
+}
+
