@@ -2,6 +2,8 @@
 
 Status: ✅ Implemented
 
+Review note (2026-09-10): the implementation sends the PM **automatically** as soon as a comment is flagged, which goes beyond the "modmail draft for manual sending" scope in the story text below. The acceptance criteria describe what shipped. Whether automatic warnings before human review are desirable is an open product question ([BACKLOG POL-1](./BACKLOG.md)).
+
 Feature area: Core Moderation
 
 Story (scoped):

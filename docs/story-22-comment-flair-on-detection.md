@@ -1,6 +1,10 @@
 # Story 22: Comment Flair on Detection (Gap Story)
 
-Status: ✅ New — identified via gap analysis; Devvit exposes comment flair APIs that can visually mark flagged content inline, reducing the need for moderators to navigate to the mod queue.
+Status: 🚫 Re-scoped (2026-09-10) — the premise doesn't hold. Reddit and Devvit have **no comment flair**: the API offers only `setUserFlair` and `setPostFlair`, and `Comment.authorFlair` is the author's read-only user flair. Setting the *user's* flair would publicly label the person, which isn't acceptable for an unreviewed AI flag.
+
+**Re-scoped story — Mod Note on Detection:** when a comment is flagged (Story 08), optionally add a private mod note to the author with `context.reddit.addModNote({ subreddit, user, note, label: 'ABUSE_WARNING' | 'SPAM_WARNING', redditId: commentId })`. Notes are visible only to moderators, appear in Reddit's native user-notes UI, and carry the comment link. Gate it behind a setting (default off). The original text below is kept for context.
+
+Original status: ✅ New — identified via gap analysis; Devvit exposes comment flair APIs that can visually mark flagged content inline, reducing the need for moderators to navigate to the mod queue.
 
 Feature area: Core Moderation
 

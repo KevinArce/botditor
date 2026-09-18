@@ -1,6 +1,6 @@
 # Story 03: Toxicity Detection
 
-Status: ✅ Implemented
+Status: 🟡 Partial — remove/flag/dry-run are implemented. The "written to the mod log with the Gemini reason" criterion isn't met: `context.modLog` no longer exists in Devvit ≥ 0.12.14 (see [BACKLOG OPS-3](./BACKLOG.md)). Scoring only works once the retired default Gemini model is replaced (OPS-1).
 
 Feature area: Core Moderation
 
@@ -28,11 +28,11 @@ Acceptance criteria:
 Feasibility rating: High
 
 Justification:
-`comment.remove()` is fully supported. `context.modLog.add()` is used by the existing nuke logic. Gemini returns a structured toxicity score with a single API call.
+`comment.remove()` is fully supported. Gemini returns a structured toxicity score with a single API call. *(Review 2026-09-10: `context.modLog.add()` was removed from Devvit; use `reddit.addRemovalNote()` to attach the reason — OPS-3.)*
 
 Devvit hooks:
 - `context.reddit.getCommentById(commentId)` then `comment.remove()`
-- `context.modLog.add({ action: 'removecomment', target: commentId, details: 'botditor', description: reason })`
+- ~~`context.modLog.add({ action: 'removecomment', target: commentId, details: 'botditor', description: reason })`~~ → `context.reddit.addRemovalNote({ itemIds: [commentId], reasonId: '', modNote: reason })` (100-char limit)
 - `context.settings.get('toxicityRemoveThreshold')`
 
 Gemini prompt strategy:

@@ -1,6 +1,9 @@
 # Story 10: User Bans via Command
 
-Status: ✅ Implemented — menu-based ban action with pre-filled confirmation form.
+Status: 🟡 Partial — the menu-based ban action with pre-filled confirmation form, permission check, error handling and analytics record all work. Gaps (tracked as [BACKLOG OPS-3](./BACKLOG.md)):
+- The mod-log entry never succeeds (`context.modLog` was removed from Devvit). Bans run as the app account, so nothing records *which moderator* issued the ban. Put that in `banUser({ note })`, which is visible to moderators in the mod log.
+- The form's help text says the reason is "Shown to the banned user". In the Reddit API, `reason` appears in the Banned Users list; the user-facing text is `message`.
+- `duration` must be 0 (permanent) or 1–999; the form doesn't cap it. `context: commentId` isn't passed, so the ban doesn't cite the comment.
 
 Feature area: Core Moderation
 

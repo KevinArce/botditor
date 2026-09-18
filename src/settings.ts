@@ -5,7 +5,13 @@
  * Imported once in main.ts so settings are registered at app boot.
  */
 import { Devvit, SettingScope } from "@devvit/public-api";
-import { SETTINGS } from "./types.js";
+import {
+  SETTINGS,
+  DEFAULT_GEMINI_MODEL,
+  DEFAULT_AI_PROVIDER,
+  DEFAULT_JEV_API_HOST,
+  DEFAULT_JEV_MODEL,
+} from "./types.js";
 
 Devvit.addSettings([
   // ── Per-installation (subreddit) settings ─────────────────────────
@@ -16,6 +22,15 @@ Devvit.addSettings([
     helpText:
       "When disabled, comments are still received but no analysis or moderation actions are taken.",
     defaultValue: true,
+    scope: SettingScope.Installation,
+  },
+  {
+    type: "string",
+    name: SETTINGS.AI_PROVIDER,
+    label: "AI Model Provider",
+    helpText:
+      "Select 'gemini' for Google Gemini Flash, 'jev' for TypeSafe Jev System 1 fast decision model, or 'dual_run' to run both in parallel and log benchmark comparisons.",
+    defaultValue: DEFAULT_AI_PROVIDER,
     scope: SettingScope.Installation,
   },
   {
@@ -166,7 +181,34 @@ Devvit.addSettings([
     type: "string",
     name: SETTINGS.GEMINI_MODEL,
     label: "Gemini Model",
-    defaultValue: "gemini-1.5-flash",
+    helpText:
+      "Gemini model ID. A retired or unknown model makes every analysis fall back to zero scores (no moderation).",
+    defaultValue: DEFAULT_GEMINI_MODEL,
+    scope: SettingScope.App,
+  },
+  {
+    type: "string",
+    name: SETTINGS.JEV_API_KEY,
+    label: "TypeSafe Jev API Key",
+    helpText: "API key for TypeSafe Jev System 1 decision model.",
+    isSecret: true,
+    scope: SettingScope.App,
+  },
+  {
+    type: "string",
+    name: SETTINGS.JEV_API_HOST,
+    label: "TypeSafe Jev API Host",
+    helpText:
+      "Hostname for TypeSafe Jev API calls (must match Devvit http config domains).",
+    defaultValue: DEFAULT_JEV_API_HOST,
+    scope: SettingScope.App,
+  },
+  {
+    type: "string",
+    name: SETTINGS.JEV_MODEL,
+    label: "TypeSafe Jev Model",
+    helpText: "Model name or checkpoint for TypeSafe Jev.",
+    defaultValue: DEFAULT_JEV_MODEL,
     scope: SettingScope.App,
   },
 ]);

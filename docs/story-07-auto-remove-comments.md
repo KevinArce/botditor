@@ -1,6 +1,6 @@
 # Story 07: Auto-Remove Rule-Breaking Comments
 
-Status: 🚀 Implemented
+Status: 🟡 Partial — removal, Redis dedup, and dry-run work. The mod-log entry never succeeds: `context.modLog` was removed from Devvit between 0.12.0 and 0.12.14 (types and runtime), so the call throws a `TypeError` that is caught and logged. Reddit's native mod log still records the removal under the app account, without Botditor's reason. Fix: [BACKLOG OPS-3](./BACKLOG.md) (`reddit.addRemovalNote()`).
 
 Feature area: Core Moderation
 
@@ -9,7 +9,7 @@ As a moderator, I want the app to remove comments that violate rules automatical
 
 Acceptance criteria:
 - ✅ Removal is triggered only when a score exceeds the relevant threshold from Story 06.
-- ✅ Every removal is written to the mod log with: action type, target comment ID, score, reason from Gemini, and a `botditor` details tag.
+- ❌ Every removal is written to the mod log with: action type, target comment ID, score, reason from Gemini, and a `botditor` details tag. *(Dead code — see status.)*
 - ✅ A `dryRun` mode (configurable via App Settings) logs what would have been removed but takes no action.
 - ✅ The removal function is reused from the existing `nuke.ts` comment removal logic (`comment.remove()`).
 - ✅ Removed comments are stored in Redis (`removed:<commentId>`) so the app does not attempt to re-remove them.
@@ -22,7 +22,7 @@ Justification:
 Implementation notes:
 - All Story 07 logic lives in `src/moderation.ts`, inside the `removeComment()` helper.
 - The dedup check, mod log write, and dedup key set each have their own try/catch — failures in one never block the others.
-- `modLog` is omitted from Devvit's `TriggerContext` type but is available at runtime; accessed via a targeted cast (same pattern as `nuke.ts`).
+- ~~`modLog` is omitted from Devvit's `TriggerContext` type but is available at runtime; accessed via a targeted cast (same pattern as `nuke.ts`).~~ **Incorrect (verified 2026-09-10):** `modLog` isn't available at runtime in `@devvit/public-api` 0.12.14+. The unit tests pass only because they mock `context.modLog`.
 - 7 unit tests cover mod log entries, dedup behavior, dry-run exclusions, and Redis failure resilience.
 - Reddit's API enforces a **100-character limit** on the `reason` (report) and `description` (mod log) fields. A `truncateReason()` helper in `moderation.ts` clips any string that exceeds this limit, appending an `…` ellipsis. This is applied at both API boundaries (`reddit.report()` and `modLog.add()`), not at the AI layer, so internal logs still contain the full reason text.
 

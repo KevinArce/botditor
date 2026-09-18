@@ -1,6 +1,8 @@
 # Story 15: Moderation Style Profiles
 
-Status: ⚠️ Scope Down — AI-generated response tone per profile is deferred; scoped to threshold presets only, with an optional tone label used in warning templates (Story 09).
+Status: 🟡 Partial (scoped down) — AI-generated response tone per profile is deferred; scoped to threshold presets only, with an optional tone label used in warning templates (Story 09).
+
+Current state (2026-09-10): `moderationProfile` exists as a free-text setting (not a `select`) and only chooses between the strict and chill warning templates (Story 09). The threshold presets in the acceptance criteria below aren't implemented, and the profile isn't included in mod-log entries.
 
 Feature area: Core Moderation
 

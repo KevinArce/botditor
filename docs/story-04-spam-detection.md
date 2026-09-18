@@ -1,6 +1,6 @@
 # Story 04: Spam Detection
 
-Status: ✅ Keep & Enrich
+Status: 🟡 Partial — rule-based heuristics, blocked domains, flag/remove modes and dry-run are implemented (`src/spam.ts`, `enforceSpam()` in `src/moderation.ts`). Gap: "if the rule-based score is below 0.5, the AI pipeline score is used" isn't enforced. The AI score is merged into the stored analysis, but `enforceSpam()` only sees the rule-based score ([BACKLOG COR-3](./BACKLOG.md)). Removals aren't logged to the mod log (OPS-3).
 
 Feature area: Core Moderation
 

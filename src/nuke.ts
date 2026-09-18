@@ -117,7 +117,10 @@ export async function handleNukePost(
 
     if (shouldRemove) {
       try {
-        await context.modLog.add({
+        const ctx = context as unknown as {
+          modLog?: { add: (entry: Record<string, string>) => Promise<void> };
+        };
+        await ctx.modLog?.add({
           action: "removecomment",
           target: props.postId,
           details: "comment-mop app",
@@ -217,7 +220,10 @@ export async function handleNuke(props: NukeProps, context: Devvit.Context) {
 
     if (shouldRemove) {
       try {
-        await context.modLog.add({
+        const ctx = context as unknown as {
+          modLog?: { add: (entry: Record<string, string>) => Promise<void> };
+        };
+        await ctx.modLog?.add({
           action: "removecomment",
           target: props.commentId,
           details: "comment-mop app",
