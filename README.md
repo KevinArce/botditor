@@ -142,7 +142,7 @@ Devvit requires every outbound domain to be declared (`Devvit.configure({ http: 
 - **`generativelanguage.googleapis.com`** — Google Gemini API. Scores each new, non-allow-listed comment for toxicity, spam, bot-likelihood and sentiment. Only the comment text is sent (≤ 8,000 characters). Google Gemini is one of Devvit's approved AI providers.
 The app requests no other domain. TypeSafe (`api.typesafe.ai`) is called only by the local `npm run bench` script, never by the Devvit app, because Devvit permits only OpenAI and Google Gemini as AI providers.
 
-Apps that use fetch also need Terms of Service and Privacy Policy links in their Devvit app details. The privacy policy must say that comment text is sent to Google for analysis ([POL-2](docs/BACKLOG.md)).
+Apps that use fetch also need Terms and Privacy Policy links in their Devvit app details: see [Terms & Conditions](TERMS.md) and [Privacy Policy](PRIVACY.md).
 
 ---
 
@@ -212,7 +212,7 @@ Bugs, ideas, and PRs are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) 
 
 ## 📄 License
 
-[BSD 3-Clause](LICENSE).
+[BSD 3-Clause](LICENSE) · [Terms & Conditions](TERMS.md) · [Privacy Policy](PRIVACY.md)
 
 ---
 

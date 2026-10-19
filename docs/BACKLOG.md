@@ -43,7 +43,7 @@ Status legend: ✅ Done · 🟡 Partial · 🔧 In progress · ⬜ Not started �
 | ID | Question | Context |
 |---|---|---|
 | **POL-1** | Should warning PMs go out automatically on a *flag*? | They're sent before any human review, so AI false positives warn innocent users. Options: a `warnOn` setting (`never` / `flag` / `remove`, default `never`), or warn only on removal. Bot flags deliberately never send PMs. |
-| **POL-2** | App-review readiness for fetch. | Devvit requires Terms and Privacy Policy links for any app that uses fetch. The privacy policy must disclose that comment text goes to Google. The app sends nothing to TypeSafe (POL-3). The README Fetch Domains section justifies the single Gemini domain. |
+| **POL-2** | App-review readiness for fetch. | 🔧 2026-10-18 — [TERMS.md](../TERMS.md) and [PRIVACY.md](../PRIVACY.md) drafted. Link them in the Devvit developer settings, then publish. Devvit requires Terms and Privacy Policy links for any app that uses fetch (`devvit publish` refuses without them). The privacy policy must disclose that comment text goes to Google. The app sends nothing to TypeSafe (POL-3). The README Fetch Domains section justifies the single Gemini domain. |
 | **POL-4** | Upgrade behaviour. | v1.5.0 turns on Story 05 bot reports (at the existing `0.75` default) and AI-assisted spam reports. Both are report-only in the default modes. Decide whether to announce this in the app's release notes or ship bot reporting off until moderators opt in. |
 
 ### P2 — platform
