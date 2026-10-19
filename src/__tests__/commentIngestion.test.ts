@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { RedisClient, SettingsClient } from "@devvit/public-api";
 import type { TriggerContext } from "@devvit/public-api";
 import type { CommentSubmit } from "@devvit/protos";
@@ -15,7 +15,9 @@ function createMockRedis(): RedisClient & { _store: Map<string, string> } {
   const redis = {
     _store: store,
     get: vi.fn(async (key: string) => store.get(key) ?? undefined),
-    set: vi.fn(async (key: string, value: string) => {
+    // Mirrors Devvit: SET NX returns "" when the key already exists
+    set: vi.fn(async (key: string, value: string, options?: { nx?: boolean }) => {
+      if (options?.nx && store.has(key)) return "";
       store.set(key, value);
       return "OK";
     }),
@@ -86,6 +88,8 @@ function createMockContext(overrides: {
 function makeEvent(overrides: {
   commentId?: string;
   author?: string;
+  /** `event.author.name` — the username (COR-1). */
+  authorUsername?: string;
   body?: string;
   postId?: string;
   subredditName?: string;
@@ -97,6 +101,9 @@ function makeEvent(overrides: {
   }
 
   return {
+    ...(overrides.authorUsername !== undefined
+      ? { author: { id: "t2_author", name: overrides.authorUsername } }
+      : {}),
     comment: {
       id: overrides.commentId ?? "t1_test123",
       author: overrides.author ?? "RegularUser",
@@ -280,6 +287,7 @@ describe("commentIngestion – handleCommentSubmit", () => {
     // Should only have been stored once – the second call is a no-op
     const stored = getStoredComment(redis, "t1_test123");
     expect(stored).not.toBeNull();
+    expect(redis._store.get(REDIS_KEYS.commentCount("testsub"))).toBe("1");
   });
 
   // ── Body sanitization ─────────────────────────────────────────────
@@ -320,5 +328,138 @@ describe("commentIngestion – handleCommentSubmit", () => {
     const stored = getStoredComment(redis, "t1_test123");
     expect(stored).not.toBeNull();
     expect(stored.status).toBe("analyzed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pipeline-level behaviour (COR-1, PERF-1, Story 05, COR-3)
+// ---------------------------------------------------------------------------
+
+describe("commentIngestion – pipeline", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  /** Make the Gemini call return these scores. */
+  function mockGemini(scores: {
+    toxicityScore?: number;
+    spamScore?: number;
+    botLikelihood?: number;
+  }) {
+    const text = JSON.stringify({
+      toxicityScore: 0,
+      spamScore: 0,
+      botLikelihood: 0,
+      sentiment: "neutral",
+      reason: "model reason",
+      ...scores,
+    });
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({ candidates: [{ content: { parts: [{ text }] } }] }),
+    } as Response);
+  }
+
+  /** Context with a working Gemini key and Reddit report/remove mocks. */
+  function pipelineContext(redis = createMockRedis()) {
+    const report = vi.fn().mockResolvedValue(undefined);
+    const remove = vi.fn().mockResolvedValue(undefined);
+    const settings = createMockSettings({
+      [SETTINGS.ENABLED]: true,
+      [SETTINGS.GEMINI_API_KEY]: "key",
+    });
+    const context = {
+      redis,
+      settings,
+      reddit: {
+        getAppUser: vi.fn().mockResolvedValue({ username: "BotditorApp" }),
+        getCommentById: vi.fn().mockResolvedValue({
+          id: "t1_test123",
+          authorName: "RegularUser",
+          remove,
+          addRemovalNote: vi.fn().mockResolvedValue(undefined),
+        }),
+        getUserByUsername: vi.fn().mockResolvedValue(undefined),
+        report,
+        sendPrivateMessage: vi.fn().mockResolvedValue(undefined),
+      },
+    } as unknown as TriggerContext;
+    return { context, settings, report, remove, redis };
+  }
+
+  it("uses event.author.name when comment.author is a t2_ ID (COR-1)", async () => {
+    const redis = createMockRedis();
+    const settings = createMockSettings({
+      [SETTINGS.ENABLED]: true,
+      [SETTINGS.ALLOWLIST_USERNAMES]: "trusteduser",
+    });
+    const context = createMockContext({ redis, settings });
+    const event = makeEvent({ author: "t2_abc123", authorUsername: "TrustedUser" });
+
+    await handleCommentSubmit(event, context);
+
+    const stored = getStoredComment(redis, "t1_test123");
+    expect(stored.authorName).toBe("TrustedUser");
+    expect(stored.skipReason).toBe("allowlisted");
+  });
+
+  it("falls back to comment.author when event.author is absent", async () => {
+    const redis = createMockRedis();
+    const context = createMockContext({ redis });
+
+    await handleCommentSubmit(makeEvent({ author: "LegacyName" }), context);
+
+    expect(getStoredComment(redis, "t1_test123").authorName).toBe("LegacyName");
+  });
+
+  it("fetches settings once per comment (PERF-1)", async () => {
+    mockGemini({});
+    const { context, settings } = pipelineContext();
+
+    await handleCommentSubmit(makeEvent(), context);
+
+    expect(settings.getAll).toHaveBeenCalledTimes(1);
+    expect(settings.get).not.toHaveBeenCalled();
+  });
+
+  it("reports a likely bot without removing or warning (Story 05)", async () => {
+    mockGemini({ botLikelihood: 0.9 });
+    const { context, report, remove, redis } = pipelineContext();
+
+    await handleCommentSubmit(makeEvent(), context);
+
+    expect(report).toHaveBeenCalledWith(expect.anything(), {
+      reason: "[botditor] bot-likelihood=0.9 — model reason",
+    });
+    expect(remove).not.toHaveBeenCalled();
+    expect(context.reddit.sendPrivateMessage).not.toHaveBeenCalled();
+    expect(getStoredComment(redis, "t1_test123").moderationAction).toBe("bot_flagged");
+  });
+
+  it("enforces the AI spam score when rule heuristics are quiet (COR-3)", async () => {
+    mockGemini({ spamScore: 0.7 });
+    const { context, report, redis } = pipelineContext();
+
+    await handleCommentSubmit(makeEvent(), context);
+
+    expect(report).toHaveBeenCalledWith(expect.anything(), {
+      reason: expect.stringContaining("[botditor] spam=0.7"),
+    });
+    const stored = getStoredComment(redis, "t1_test123");
+    expect(stored.analysis.spamScore).toBe(0.7);
+  });
+
+  it("takes no action when the AI call fails (zero fallback scores)", async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error("network down"));
+    const { context, report, remove } = pipelineContext();
+
+    await handleCommentSubmit(makeEvent(), context);
+
+    expect(report).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
   });
 });

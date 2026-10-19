@@ -4,6 +4,8 @@ import {
   loadModerationRules,
   logActiveRules,
   validateThresholdPair,
+  validateThreshold,
+  validateSpamMode,
   validateProfile,
 } from "../rules.js";
 import { SETTINGS, DEFAULT_RULES } from "../types.js";
@@ -196,5 +198,74 @@ describe("validateProfile", () => {
       expect.stringContaining("Unknown moderation profile")
     );
     warnSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// COR-2: range validation
+// ---------------------------------------------------------------------------
+
+describe("validateThreshold", () => {
+  it("accepts values in (0, 1]", () => {
+    expect(validateThreshold("t", 0.01, 0.5)).toBe(0.01);
+    expect(validateThreshold("t", 0.7, 0.5)).toBe(0.7);
+    expect(validateThreshold("t", 1, 0.5)).toBe(1);
+  });
+
+  it("uses the default when unset", () => {
+    expect(validateThreshold("t", undefined, 0.5)).toBe(0.5);
+  });
+
+  it.each([0, -0.2, Number.NaN, Number.POSITIVE_INFINITY, "0.7"])(
+    "falls back to the default for invalid value %j",
+    (value) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      expect(validateThreshold("t", value, 0.5)).toBe(0.5);
+      expect(warn).toHaveBeenCalled();
+      warn.mockRestore();
+    }
+  );
+
+  it("keeps values above 1 (action effectively off) but warns", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(validateThreshold("t", 1.5, 0.5)).toBe(1.5);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});
+
+describe("loadModerationRules — range validation", () => {
+  it("never yields a zero remove threshold (would remove every comment)", async () => {
+    const settings = createMockSettings({
+      [SETTINGS.TOXICITY_REMOVE_THRESHOLD]: 0,
+      [SETTINGS.SPAM_FLAG_THRESHOLD]: -1,
+      [SETTINGS.BOT_FLAG_THRESHOLD]: 0,
+    });
+    const rules = await loadModerationRules(settings);
+
+    expect(rules.toxicityRemoveThreshold).toBe(DEFAULT_RULES.toxicityRemoveThreshold);
+    expect(rules.spamFlagThreshold).toBe(DEFAULT_RULES.spamFlagThreshold);
+    expect(rules.botFlagThreshold).toBe(DEFAULT_RULES.botFlagThreshold);
+  });
+
+  it("normalises spam mode case and whitespace", async () => {
+    const rules = await loadModerationRules(
+      createMockSettings({ [SETTINGS.SPAM_MODE]: " Remove " })
+    );
+    expect(rules.spamMode).toBe("remove");
+  });
+});
+
+describe("validateSpamMode", () => {
+  it("accepts 'flag' and 'remove'", () => {
+    expect(validateSpamMode("flag")).toBe("flag");
+    expect(validateSpamMode("remove")).toBe("remove");
+  });
+
+  it("falls back to the safe 'flag' mode for typos", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(validateSpamMode("remvoe")).toBe("flag");
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import type { SettingsClient } from "@devvit/public-api";
 import type { TriggerContext } from "@devvit/public-api";
-import { enforceToxicity } from "../moderation.js";
-import { DEFAULT_RULES } from "../types.js";
+import { enforceToxicity, enforceBot } from "../moderation.js";
+import { DEFAULT_RULES, REMOVED_DEDUP_TTL_S } from "../types.js";
 import type { AnalysisResult, IngestedComment, ModerationRules } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -13,8 +13,8 @@ function createMockContext(overrides: {
   removeThrows?: boolean;
   removeFn?: ReturnType<typeof vi.fn>;
   reportFn?: ReturnType<typeof vi.fn>;
-  modLogFn?: ReturnType<typeof vi.fn>;
-  modLogThrows?: boolean;
+  removalNoteFn?: ReturnType<typeof vi.fn>;
+  removalNoteThrows?: boolean;
   redisGetFn?: ReturnType<typeof vi.fn>;
   redisSetFn?: ReturnType<typeof vi.fn>;
   redisExpireFn?: ReturnType<typeof vi.fn>;
@@ -25,8 +25,8 @@ function createMockContext(overrides: {
 
   const reportFn = overrides.reportFn ?? vi.fn().mockResolvedValue(undefined);
 
-  const modLogFn = overrides.modLogFn ?? (overrides.modLogThrows
-    ? vi.fn().mockRejectedValue(new Error("Mod log unavailable"))
+  const removalNoteFn = overrides.removalNoteFn ?? (overrides.removalNoteThrows
+    ? vi.fn().mockRejectedValue(new Error("Removal note unavailable"))
     : vi.fn().mockResolvedValue(undefined));
 
   const redisGetFn = overrides.redisGetFn ?? vi.fn().mockResolvedValue(null);
@@ -35,6 +35,7 @@ function createMockContext(overrides: {
 
   const mockComment = {
     remove: removeFn,
+    addRemovalNote: removalNoteFn,
     id: "t1_test123",
   };
 
@@ -42,9 +43,6 @@ function createMockContext(overrides: {
     reddit: {
       getCommentById: vi.fn().mockResolvedValue(mockComment),
       report: reportFn,
-    },
-    modLog: {
-      add: modLogFn,
     },
     redis: {
       get: redisGetFn,
@@ -232,45 +230,55 @@ describe("enforceToxicity", () => {
     expect(action).toBe("none");
   });
 
-  // ── Story 07: Mod log entries ─────────────────────────────────────
+  // ── Story 07 / OPS-3: Removal notes ───────────────────────────────
 
-  it("writes to mod log after successful removal with botditor details tag", async () => {
-    const modLogFn = vi.fn().mockResolvedValue(undefined);
-    const context = createMockContext({ modLogFn });
+  it("adds a mod-facing removal note with the botditor reason after removal", async () => {
+    const removalNoteFn = vi.fn().mockResolvedValue(undefined);
+    const context = createMockContext({ removalNoteFn });
     const record = makeRecord();
     const analysis = makeAnalysis({ toxicityScore: 0.95, reason: "extremely toxic language" });
 
     const action = await enforceToxicity(record, analysis, makeRules(), context);
 
     expect(action).toBe("removed");
-    expect(modLogFn).toHaveBeenCalledWith({
-      action: "removecomment",
-      target: "t1_test123",
-      details: "botditor",
-      description: "extremely toxic language",
+    expect(removalNoteFn).toHaveBeenCalledWith({
+      reasonId: "",
+      modNote: "[botditor] extremely toxic language",
     });
   });
 
-  it("still returns removed when mod log write fails", async () => {
-    const context = createMockContext({ modLogThrows: true });
+  it("truncates the removal note to Reddit's 100-character limit", async () => {
+    const removalNoteFn = vi.fn().mockResolvedValue(undefined);
+    const context = createMockContext({ removalNoteFn });
+    const analysis = makeAnalysis({ toxicityScore: 0.95, reason: "x".repeat(300) });
+
+    await enforceToxicity(makeRecord(), analysis, makeRules(), context);
+
+    const { modNote } = removalNoteFn.mock.calls[0][0] as { modNote: string };
+    expect(modNote.length).toBe(100);
+    expect(modNote.endsWith("…")).toBe(true);
+  });
+
+  it("still returns removed when the removal note fails", async () => {
+    const context = createMockContext({ removalNoteThrows: true });
     const record = makeRecord();
     const analysis = makeAnalysis({ toxicityScore: 0.95 });
 
     const action = await enforceToxicity(record, analysis, makeRules(), context);
 
-    // Removal should succeed even if mod log fails
+    // Removal should succeed even if the note fails
     expect(action).toBe("removed");
   });
 
-  it("does NOT write mod log in dry-run mode", async () => {
-    const modLogFn = vi.fn().mockResolvedValue(undefined);
-    const context = createMockContext({ modLogFn });
+  it("does NOT add a removal note in dry-run mode", async () => {
+    const removalNoteFn = vi.fn().mockResolvedValue(undefined);
+    const context = createMockContext({ removalNoteFn });
     const record = makeRecord();
     const analysis = makeAnalysis({ toxicityScore: 0.95 });
 
     await enforceToxicity(record, analysis, makeRules({ dryRun: true }), context);
 
-    expect(modLogFn).not.toHaveBeenCalled();
+    expect(removalNoteFn).not.toHaveBeenCalled();
   });
 
   // ── Story 07: Deduplication via Redis ─────────────────────────────
@@ -284,7 +292,12 @@ describe("enforceToxicity", () => {
     const action = await enforceToxicity(record, analysis, makeRules(), context);
 
     expect(action).toBe("removed");
-    expect(redisSetFn).toHaveBeenCalledWith("removed:t1_test123", "1");
+    const [key, value, options] = redisSetFn.mock.calls[0];
+    expect(key).toBe("removed:t1_test123");
+    expect(value).toBe("1");
+    // COR-4: dedup key expires after 7 days
+    const ttlMs = (options as { expiration: Date }).expiration.getTime() - Date.now();
+    expect(Math.abs(ttlMs - REMOVED_DEDUP_TTL_S * 1000)).toBeLessThan(1000);
   });
 
   it("skips removal when dedup key already exists", async () => {
@@ -449,5 +462,97 @@ describe("enforceToxicity — Story 08 flagging", () => {
       (args: unknown[]) => (args[0] as string).startsWith("flagged:")
     );
     expect(flagSetCall).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Story 05 – Bot-likelihood flagging
+// ---------------------------------------------------------------------------
+
+describe("enforceBot", () => {
+  it("reports when bot-likelihood >= botFlagThreshold", async () => {
+    const reportFn = vi.fn().mockResolvedValue(undefined);
+    const context = createMockContext({ reportFn });
+    const analysis = makeAnalysis({ botLikelihood: 0.8, reason: "templated text" });
+
+    const action = await enforceBot(makeRecord(), analysis, makeRules(), context);
+
+    expect(action).toBe("bot_flagged");
+    expect(reportFn).toHaveBeenCalledWith(expect.anything(), {
+      reason: "[botditor] bot-likelihood=0.8 — templated text",
+    });
+  });
+
+  it("flags at exactly the threshold", async () => {
+    const context = createMockContext();
+    const analysis = makeAnalysis({ botLikelihood: 0.75 });
+
+    const action = await enforceBot(makeRecord(), analysis, makeRules(), context);
+    expect(action).toBe("bot_flagged");
+  });
+
+  it("takes no action below the threshold", async () => {
+    const reportFn = vi.fn();
+    const context = createMockContext({ reportFn });
+    const analysis = makeAnalysis({ botLikelihood: 0.74 });
+
+    const action = await enforceBot(makeRecord(), analysis, makeRules(), context);
+
+    expect(action).toBe("none");
+    expect(reportFn).not.toHaveBeenCalled();
+  });
+
+  it("respects a custom botFlagThreshold", async () => {
+    const context = createMockContext();
+    const analysis = makeAnalysis({ botLikelihood: 0.5 });
+
+    const action = await enforceBot(
+      makeRecord(),
+      analysis,
+      makeRules({ botFlagThreshold: 0.4 }),
+      context
+    );
+    expect(action).toBe("bot_flagged");
+  });
+
+  it("returns dry_run_bot_flag without reporting in dry-run mode", async () => {
+    const reportFn = vi.fn();
+    const context = createMockContext({ reportFn });
+    const analysis = makeAnalysis({ botLikelihood: 0.9 });
+
+    const action = await enforceBot(makeRecord(), analysis, makeRules({ dryRun: true }), context);
+
+    expect(action).toBe("dry_run_bot_flag");
+    expect(reportFn).not.toHaveBeenCalled();
+  });
+
+  it("never removes the comment", async () => {
+    const removeFn = vi.fn();
+    const context = createMockContext({ removeFn });
+    const analysis = makeAnalysis({ botLikelihood: 1 });
+
+    await enforceBot(makeRecord(), analysis, makeRules(), context);
+    expect(removeFn).not.toHaveBeenCalled();
+  });
+
+  it("does not double-report a comment already flagged for another reason", async () => {
+    const reportFn = vi.fn();
+    const redisGetFn = vi.fn().mockResolvedValue('{"score":0.7}'); // flagged:<id> exists
+    const context = createMockContext({ reportFn, redisGetFn });
+    const analysis = makeAnalysis({ botLikelihood: 0.9 });
+
+    const action = await enforceBot(makeRecord(), analysis, makeRules(), context);
+
+    expect(action).toBe("none");
+    expect(reportFn).not.toHaveBeenCalled();
+  });
+
+  it("returns none when the report call fails", async () => {
+    const reportFn = vi.fn().mockRejectedValue(new Error("rate limited"));
+    const context = createMockContext({ reportFn });
+    const analysis = makeAnalysis({ botLikelihood: 0.9 });
+
+    const action = await enforceBot(makeRecord(), analysis, makeRules(), context);
+    expect(action).toBe("none");
   });
 });

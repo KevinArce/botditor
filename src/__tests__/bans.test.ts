@@ -13,7 +13,6 @@ function createMockContext(overrides: {
   banUserFn?: ReturnType<typeof vi.fn>;
   getCurrentUserFn?: ReturnType<typeof vi.fn>;
   getModPermsFn?: ReturnType<typeof vi.fn>;
-  modLogAddFn?: ReturnType<typeof vi.fn>;
   redisSetFn?: ReturnType<typeof vi.fn>;
   redisIncrByFn?: ReturnType<typeof vi.fn>;
 } = {}): Devvit.Context {
@@ -29,8 +28,6 @@ function createMockContext(overrides: {
     });
   const banUserFn =
     overrides.banUserFn ?? vi.fn().mockResolvedValue(undefined);
-  const modLogAddFn =
-    overrides.modLogAddFn ?? vi.fn().mockResolvedValue(undefined);
   const redisSetFn =
     overrides.redisSetFn ?? vi.fn().mockResolvedValue(undefined);
   const redisIncrByFn =
@@ -40,9 +37,6 @@ function createMockContext(overrides: {
     reddit: {
       getCurrentUser: getCurrentUserFn,
       banUser: banUserFn,
-    },
-    modLog: {
-      add: modLogAddFn,
     },
     redis: {
       set: redisSetFn,
@@ -70,14 +64,12 @@ function makeProps(overrides: Partial<BanUserProps> = {}): BanUserProps {
 describe("handleBanUser", () => {
   // ── Happy path ──────────────────────────────────────────────────────
 
-  it("bans user, writes mod log, persists analytics, and returns success", async () => {
+  it("bans user with an audit note, persists analytics, and returns success", async () => {
     const banUserFn = vi.fn().mockResolvedValue(undefined);
-    const modLogAddFn = vi.fn().mockResolvedValue(undefined);
     const redisSetFn = vi.fn().mockResolvedValue(undefined);
     const redisIncrByFn = vi.fn().mockResolvedValue(1);
     const context = createMockContext({
       banUserFn,
-      modLogAddFn,
       redisSetFn,
       redisIncrByFn,
     });
@@ -89,23 +81,17 @@ describe("handleBanUser", () => {
     expect(result.message).toContain("BadUser");
     expect(result.message).toContain("permanently");
 
-    // Verify banUser was called correctly
+    // Verify banUser was called correctly (OPS-3: acting mod in the note,
+    // offending comment as context; `reason` is mod-facing)
     expect(banUserFn).toHaveBeenCalledWith({
       subredditName: "testsub",
       username: "BadUser",
       reason: "Toxic behaviour",
+      message: undefined,
       duration: undefined, // permanent
-      note: undefined,
+      note: "Banned by u/ModUser via botditor",
+      context: "t1_ban123",
     });
-
-    // Verify mod log
-    expect(modLogAddFn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: "banuser",
-        target: "t1_ban123",
-        details: "botditor",
-      })
-    );
 
     // Verify analytics persisted in Redis
     const setCalls = redisSetFn.mock.calls;
@@ -224,18 +210,27 @@ describe("handleBanUser", () => {
     expect(result.message).toContain("Network timeout");
   });
 
-  // ── Non-fatal mod log failure ───────────────────────────────────────
+  // ── Duration validation ─────────────────────────────────────────────
 
-  it("still returns success when mod log write fails", async () => {
-    const modLogAddFn = vi
-      .fn()
-      .mockRejectedValue(new Error("ModLog unavailable"));
-    const context = createMockContext({ modLogAddFn });
-    const props = makeProps();
+  it("rejects durations above Reddit's 999-day limit without calling banUser", async () => {
+    const banUserFn = vi.fn();
+    const context = createMockContext({ banUserFn });
 
-    const result = await handleBanUser(props, context);
+    const result = await handleBanUser(makeProps({ duration: 1000 }), context);
+
+    expect(result.success).toBe(false);
+    expect(result.message).toContain("1–999");
+    expect(banUserFn).not.toHaveBeenCalled();
+  });
+
+  it("accepts the 999-day maximum", async () => {
+    const banUserFn = vi.fn().mockResolvedValue(undefined);
+    const context = createMockContext({ banUserFn });
+
+    const result = await handleBanUser(makeProps({ duration: 999 }), context);
 
     expect(result.success).toBe(true);
+    expect(banUserFn).toHaveBeenCalledWith(expect.objectContaining({ duration: 999 }));
   });
 
   // ── Non-fatal analytics failure ─────────────────────────────────────
@@ -269,7 +264,7 @@ describe("handleBanUser", () => {
 
   // ── Note handling ───────────────────────────────────────────────────
 
-  it("passes note to banUser when provided", async () => {
+  it("appends the moderator's note after the acting-moderator prefix", async () => {
     const banUserFn = vi.fn().mockResolvedValue(undefined);
     const context = createMockContext({ banUserFn });
     const props = makeProps({ note: "Repeat offender" });
@@ -277,19 +272,51 @@ describe("handleBanUser", () => {
     await handleBanUser(props, context);
 
     expect(banUserFn).toHaveBeenCalledWith(
-      expect.objectContaining({ note: "Repeat offender" })
+      expect.objectContaining({
+        note: "Banned by u/ModUser via botditor: Repeat offender",
+      })
     );
   });
 
-  it("omits note when empty string", async () => {
+  it("truncates the note to Reddit's 300-character limit", async () => {
     const banUserFn = vi.fn().mockResolvedValue(undefined);
     const context = createMockContext({ banUserFn });
-    const props = makeProps({ note: "" });
 
-    await handleBanUser(props, context);
+    await handleBanUser(makeProps({ note: "n".repeat(500) }), context);
+
+    const { note } = banUserFn.mock.calls[0][0] as { note: string };
+    expect(note.length).toBe(300);
+  });
+
+  it("truncates the mod-facing reason to 100 characters", async () => {
+    const banUserFn = vi.fn().mockResolvedValue(undefined);
+    const context = createMockContext({ banUserFn });
+
+    await handleBanUser(makeProps({ reason: "r".repeat(200) }), context);
+
+    const { reason } = banUserFn.mock.calls[0][0] as { reason: string };
+    expect(reason.length).toBe(100);
+  });
+
+  it("passes the user-facing message when provided", async () => {
+    const banUserFn = vi.fn().mockResolvedValue(undefined);
+    const context = createMockContext({ banUserFn });
+
+    await handleBanUser(makeProps({ message: "Please read rule 2." }), context);
 
     expect(banUserFn).toHaveBeenCalledWith(
-      expect.objectContaining({ note: undefined })
+      expect.objectContaining({ message: "Please read rule 2." })
+    );
+  });
+
+  it("omits context when no comment ID is available", async () => {
+    const banUserFn = vi.fn().mockResolvedValue(undefined);
+    const context = createMockContext({ banUserFn });
+
+    await handleBanUser(makeProps({ commentId: "" }), context);
+
+    expect(banUserFn).toHaveBeenCalledWith(
+      expect.objectContaining({ context: undefined })
     );
   });
 });

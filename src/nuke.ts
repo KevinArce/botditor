@@ -16,6 +16,37 @@ export type NukePostProps = {
   subredditId: string;
 };
 
+/** Thing IDs per `addRemovalNote` call; the API takes a list of IDs. */
+const REMOVAL_NOTE_BATCH = 100;
+
+/**
+ * Record who mopped and why as a mod-facing removal note on every removed
+ * comment. Mop runs as the app account, so without this the mod log can't
+ * tell which moderator triggered it. This replaced `context.modLog.add()`,
+ * which Devvit removed (OPS-3). Failures are logged, never thrown.
+ */
+async function addMopRemovalNote(
+  comments: Comment[],
+  modNote: string,
+  context: Devvit.Context
+): Promise<void> {
+  const ids = comments.map((c) => c.id);
+  for (let i = 0; i < ids.length; i += REMOVAL_NOTE_BATCH) {
+    try {
+      await context.reddit.addRemovalNote({
+        itemIds: ids.slice(i, i + REMOVAL_NOTE_BATCH),
+        reasonId: "",
+        modNote: modNote.slice(0, 100),
+      });
+    } catch (e: unknown) {
+      console.error(
+        "Failed to add mop removal note:",
+        e instanceof Error ? e.message : e
+      );
+    }
+  }
+}
+
 // Depth-first traversal to get all comments in a thread
 async function* getAllCommentsInThread(
   comment: Comment,
@@ -116,22 +147,11 @@ export async function handleNukePost(
         : "removed";
 
     if (shouldRemove) {
-      try {
-        const ctx = context as unknown as {
-          modLog?: { add: (entry: Record<string, string>) => Promise<void> };
-        };
-        await ctx.modLog?.add({
-          action: "removecomment",
-          target: props.postId,
-          details: "comment-mop app",
-          description: `u/${user.username} used comment-mop to ${verbage} all comments of this post.`,
-        });
-      } catch (e: unknown) {
-        console.error(
-          `Failed to add modlog for post: ${props.postId}.`,
-          (e as Error).message
-        );
-      }
+      await addMopRemovalNote(
+        comments,
+        `[botditor] mopped by u/${user.username} (all comments on post)`,
+        context
+      );
     }
 
     success = true;
@@ -219,22 +239,11 @@ export async function handleNuke(props: NukeProps, context: Devvit.Context) {
         : "removed";
 
     if (shouldRemove) {
-      try {
-        const ctx = context as unknown as {
-          modLog?: { add: (entry: Record<string, string>) => Promise<void> };
-        };
-        await ctx.modLog?.add({
-          action: "removecomment",
-          target: props.commentId,
-          details: "comment-mop app",
-          description: `u/${user.username} used comment-mop to ${verbage} this comment and all child comments.`,
-        });
-      } catch (e: unknown) {
-        console.error(
-          `Failed to add modlog for comment: ${props.commentId}.`,
-          (e as Error).message
-        );
-      }
+      await addMopRemovalNote(
+        comments,
+        `[botditor] mopped by u/${user.username} (comment thread)`,
+        context
+      );
     }
 
     success = true;

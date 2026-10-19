@@ -9,6 +9,8 @@ import {
   parseAnalysisResponse,
   extractGeneratedText,
   isEmojiOnly,
+  isGeminiFailure,
+  requestGeminiAnalysis,
   SYSTEM_INSTRUCTION,
 } from "../ai.js";
 import {
@@ -581,135 +583,61 @@ describe("analyzeComment — Gemini request", () => {
 // Tests – Provider routing & Dual-Run mode
 // ---------------------------------------------------------------------------
 
-describe("analyzeComment provider routing", () => {
+describe("requestGeminiAnalysis (context-free, shared with the benchmark)", () => {
   const originalFetch = globalThis.fetch;
-
-  beforeEach(() => {
-    vi.restoreAllMocks();
-  });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
   });
 
-  it("routes to Jev when AI_PROVIDER is 'jev'", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: async () =>
+  it("calls Gemini with the given key and model, without Redis or settings", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      geminiOk(
         JSON.stringify({
-          toxicityScore: 0.9,
+          toxicityScore: 0.4,
           spamScore: 0.1,
-          botLikelihood: 0.05,
-          sentiment: "negative",
-          reason: "jev flagged",
-        }),
+          botLikelihood: 0.2,
+          sentiment: "neutral",
+          reason: "mild",
+        })
+      )
+    );
+    globalThis.fetch = fetchMock;
+
+    const result = await requestGeminiAnalysis(
+      "hello",
+      { apiKey: "bench-key", model: "gemini-3.6-flash" },
+      "item a"
+    );
+
+    expect(result.toxicityScore).toBe(0.4);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain("/models/gemini-3.6-flash:generateContent");
+    expect(init.headers["x-goog-api-key"]).toBe("bench-key");
+  });
+
+  it("returns a recognisable failure on HTTP errors", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      text: async () => "",
     } as Response);
-    globalThis.fetch = fetchMock;
 
-    const context = createMockContext({
-      settings: createMockSettings({
-        [SETTINGS.AI_PROVIDER]: "jev",
-        [SETTINGS.JEV_API_KEY]: "jev-secret",
-      }),
-    });
-
-    const result = await analyzeComment(makeRecord(), context);
-    expect(result.toxicityScore).toBe(0.9);
-    expect(result.reason).toBe("jev flagged");
-    expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining("typesafe.ai"),
-      expect.anything()
-    );
+    const result = await requestGeminiAnalysis("hello", { apiKey: "k", model: "m" }, "item");
+    expect(result.reason).toBe("api error 503");
+    expect(isGeminiFailure(result)).toBe(true);
   });
+});
 
-  it("falls back to Gemini if Jev fails when AI_PROVIDER is 'jev'", async () => {
-    const fetchMock = vi
-      .fn()
-      // First call (Jev) fails with 500
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-        text: async () => "Internal Server Error",
-      } as Response)
-      // Second call (Gemini fallback) succeeds
-      .mockResolvedValueOnce(
-        geminiOk(
-          JSON.stringify({
-            toxicityScore: 0.7,
-            spamScore: 0.1,
-            botLikelihood: 0.2,
-            sentiment: "neutral",
-            reason: "gemini fallback response",
-          })
-        )
-      );
-    globalThis.fetch = fetchMock;
+describe("isGeminiFailure", () => {
+  it.each(["timeout", "fetch error", "api error 404", "response read error", "empty response", "parse error"])(
+    "treats %s as a failure",
+    (reason) => {
+      expect(isGeminiFailure({ ...ANALYSIS_FALLBACK, reason })).toBe(true);
+    }
+  );
 
-    const context = createMockContext({
-      settings: createMockSettings({
-        [SETTINGS.AI_PROVIDER]: "jev",
-        [SETTINGS.JEV_API_KEY]: "jev-secret",
-        [SETTINGS.GEMINI_API_KEY]: "gemini-key",
-      }),
-    });
-
-    const result = await analyzeComment(makeRecord(), context);
-    expect(result.toxicityScore).toBe(0.7);
-    expect(result.reason).toBe("gemini fallback response");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("executes dual-run mode and logs comparison into Redis", async () => {
-    const fetchMock = vi.fn((url: string | URL | Request) => {
-      const urlStr = url.toString();
-      if (urlStr.includes("typesafe.ai")) {
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          text: async () =>
-            JSON.stringify({
-              toxicityScore: 0.85,
-              spamScore: 0.1,
-              botLikelihood: 0.05,
-              sentiment: "negative",
-              reason: "jev detection",
-            }),
-        } as Response);
-      }
-      return Promise.resolve(
-        geminiOk(
-          JSON.stringify({
-            toxicityScore: 0.8,
-            spamScore: 0.15,
-            botLikelihood: 0.1,
-            sentiment: "negative",
-            reason: "gemini detection",
-          })
-        )
-      );
-    });
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
-
-    const redis = createMockRedis();
-    const context = createMockContext({
-      redis,
-      settings: createMockSettings({
-        [SETTINGS.AI_PROVIDER]: "dual_run",
-        [SETTINGS.JEV_API_KEY]: "jev-secret",
-        [SETTINGS.GEMINI_API_KEY]: "gemini-key",
-      }),
-    });
-
-    const result = await analyzeComment(makeRecord(), context);
-    expect(result.toxicityScore).toBe(0.85); // Returns Jev fast result
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-
-    // Verify benchmark record in Redis
-    const comparisonKey = REDIS_KEYS.jevComparison("t1_test123");
-    expect(redis.set).toHaveBeenCalledWith(
-      comparisonKey,
-      expect.stringContaining('"toxicityDelta":0.05')
-    );
+  it("treats a model reason as a real answer", () => {
+    expect(isGeminiFailure({ ...ANALYSIS_FALLBACK, reason: "an api error was mentioned" })).toBe(false);
   });
 });

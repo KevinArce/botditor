@@ -12,16 +12,18 @@
  *     "error" in storage – they never throw out of the handler.
  *   • Duplicate comments (re-delivered events) are detected via Redis and
  *     silently skipped (idempotent).
+ *   • Settings are read once per comment through a snapshot (PERF-1).
  */
 import type { CommentSubmit } from "@devvit/protos";
 import type { TriggerContext } from "@devvit/public-api";
 import { isUserAllowlisted } from "./allowlist.js";
 import { saveComment, updateCommentStatus } from "./commentStorage.js";
 import { analyzeComment } from "./ai.js";
-import { enforceToxicity, enforceSpam } from "./moderation.js";
+import { enforceToxicity, enforceSpam, enforceBot } from "./moderation.js";
 import { sendWarning } from "./warnings.js";
-import { computeSpamScore } from "./spam.js";
+import { computeSpamScore, mergeSpamSignals } from "./spam.js";
 import { loadModerationRules, logActiveRules } from "./rules.js";
+import { withSettingsSnapshot } from "./settingsSnapshot.js";
 import type { IngestedComment, SkipReason, ModerationAction } from "./types.js";
 import { SETTINGS, MAX_BODY_LENGTH } from "./types.js";
 import type { RedisClient } from "@devvit/public-api";
@@ -32,8 +34,9 @@ import type { RedisClient } from "@devvit/public-api";
 
 export async function handleCommentSubmit(
   event: CommentSubmit,
-  context: TriggerContext
+  triggerContext: TriggerContext
 ): Promise<void> {
+  const context = withSettingsSnapshot(triggerContext);
   const { redis, settings } = context;
 
   // ── 1. Check enabled toggle ──────────────────────────────────────
@@ -57,7 +60,9 @@ export async function handleCommentSubmit(
   }
 
   const commentId = comment.id;
-  const authorName = comment.author ?? "";
+  // COR-1: `comment.author` can be the author's t2_ ID; `event.author.name`
+  // is the username that the allowlist, spam checks and PMs need.
+  const authorName = event.author?.name || comment.author || "";
   const body = comment.body ?? "";
   const postId = comment.postId ?? "";
   const subredditName = subreddit?.name ?? "";
@@ -162,13 +167,12 @@ export async function handleCommentSubmit(
     await updateCommentStatus(commentId, { status: "processing" }, redis);
     const analysis = await analyzeComment(record, context);
 
-    // ── 8b. Compute rule-based spam score (Story 04) ────────────────
-    const spamResult = await computeSpamScore(body, authorName, context);
-
-    // Merge: if rule-based score ≥ 0.5, override the AI spam score
-    if (spamResult.score >= 0.5) {
-      analysis.spamScore = spamResult.score;
-    }
+    // ── 8b. Rule-based spam score, blended with the AI score ────────
+    // (Story 04 / COR-3). A rule score ≥ 0.5 is final; otherwise the
+    // higher of the two is both stored and enforced.
+    const ruleSpam = await computeSpamScore(body, authorName, context);
+    const spamResult = mergeSpamSignals(ruleSpam, analysis);
+    analysis.spamScore = spamResult.score;
 
     await updateCommentStatus(
       commentId,
@@ -223,10 +227,25 @@ export async function handleCommentSubmit(
       }
     }
 
+    // ── 11. Bot-likelihood flag (Story 05) ─────────────────────────
+    // Report-only and no warning PM: messaging a suspected bot is
+    // pointless, and messaging a misjudged human is accusatory.
+    let botAction: ModerationAction = "none";
+    if (toxAction !== "removed" && spamAction !== "spam_removed") {
+      botAction = await enforceBot(record, analysis, rules, context);
+      if (botAction !== "none") {
+        await updateCommentStatus(
+          commentId,
+          { moderationAction: botAction },
+          redis
+        );
+      }
+    }
+
     console.log(
       `[ingestion] Comment ${commentId} analyzed ` +
-      `(toxicity=${analysis.toxicityScore}, spam=${analysis.spamScore}) ` +
-      `→ toxAction=${toxAction}, spamAction=${spamAction}`
+      `(toxicity=${analysis.toxicityScore}, spam=${analysis.spamScore}, bot=${analysis.botLikelihood}) ` +
+      `→ toxAction=${toxAction}, spamAction=${spamAction}, botAction=${botAction}`
     );
   } catch (err) {
     console.error(

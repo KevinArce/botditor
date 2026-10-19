@@ -4,12 +4,8 @@ import { handleNuke, handleNukePost } from "./nuke.js";
 import { handleBanUser } from "./bans.js";
 import { handleCommentSubmit } from "./commentIngestion.js";
 import { getComment } from "./commentStorage.js";
-import {
-  addUserToAllowlist,
-  removeUserFromAllowlist,
-  isUserAllowlisted,
-} from "./allowlist.js";
-import { GEMINI_API_HOST, DEFAULT_JEV_API_HOST } from "./types.js";
+import { addUserToAllowlist, removeUserFromAllowlist } from "./allowlist.js";
+import { GEMINI_API_HOST } from "./types.js";
 
 // Register all app settings (must be imported before Devvit.configure)
 import "./settings.js";
@@ -18,8 +14,10 @@ Devvit.configure({
   redditAPI: true,
   redis: true,
   // Devvit requires every fetched domain to be requested explicitly, even
-  // ones on its global allow-list (Gemini API & TypeSafe Jev API).
-  http: { domains: [GEMINI_API_HOST, DEFAULT_JEV_API_HOST] },
+  // ones on its global allow-list. Gemini only: Devvit permits only OpenAI
+  // and Google Gemini as AI providers, so TypeSafe Jev is benchmarked
+  // offline (`npm run bench`) and its domain is never requested (POL-3).
+  http: { domains: [GEMINI_API_HOST] },
 });
 
 // ---------------------------------------------------------------------------
@@ -227,25 +225,34 @@ const banForm = Devvit.createForm(
         },
         {
           name: "reason",
-          label: "Ban reason",
+          label: "Ban reason (moderators only)",
           type: "string",
           defaultValue: data?.reason ?? "",
           helpText:
-            "Shown to the banned user. Pre-filled from AI analysis if available.",
+            "Shown in the Banned Users list, not to the user. Pre-filled from AI analysis if available. Max 100 characters.",
+        },
+        {
+          name: "message",
+          label: "Message to the banned user (optional)",
+          type: "paragraph",
+          defaultValue: "",
+          helpText:
+            "Included in the ban notification the user receives. Leave empty to send none.",
         },
         {
           name: "duration",
           label: "Duration (days, 0 = permanent)",
           type: "number",
           defaultValue: data?.duration ?? 0,
-          helpText: "Enter 0 for a permanent ban, or a number of days.",
+          helpText: "Enter 0 for a permanent ban, or 1–999 days.",
         },
         {
           name: "note",
           label: "Mod note (internal)",
           type: "string",
           defaultValue: "",
-          helpText: "Internal note visible only to moderators.",
+          helpText:
+            "Visible only to moderators, in the mod log. Your username is added automatically.",
         },
       ] as FormField[],
       title: "Ban User",
@@ -267,6 +274,7 @@ const banForm = Devvit.createForm(
         username: username.trim(),
         subredditName,
         reason: (values.reason as string) || "",
+        message: (values.message as string) || "",
         duration: Math.max(0, Math.floor(Number(values.duration) || 0)),
         note: (values.note as string) || "",
         commentId: context.commentId ?? "",

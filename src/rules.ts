@@ -2,7 +2,8 @@
  * Centralized Moderation Rules – Story 06
  *
  * Reads all moderation-related Devvit settings, validates threshold
- * ordering (remove ≥ flag), and returns a type-safe `ModerationRules`
+ * ranges (0 < x ≤ 1) and ordering (remove ≥ flag), normalises the
+ * free-text enum settings, and returns a type-safe `ModerationRules`
  * snapshot.  On any error the function falls back to `DEFAULT_RULES`
  * and logs the issue — the app never starts with undefined behaviour.
  *
@@ -11,7 +12,7 @@
  * reading settings ad-hoc.
  */
 import type { SettingsClient } from "@devvit/public-api";
-import type { ModerationRules, ModerationProfile } from "./types.js";
+import type { ModerationRules, ModerationProfile, SpamMode } from "./types.js";
 import { SETTINGS, DEFAULT_RULES } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -72,26 +73,37 @@ async function loadAndValidate(
     (await settings.get<string>(SETTINGS.MODERATION_PROFILE)) ?? DEFAULT_RULES.moderationProfile;
   const moderationProfile = validateProfile(profileRaw);
 
-  let toxicityRemoveThreshold =
-    (await settings.get<number>(SETTINGS.TOXICITY_REMOVE_THRESHOLD)) ??
-    DEFAULT_RULES.toxicityRemoveThreshold;
-  let toxicityFlagThreshold =
-    (await settings.get<number>(SETTINGS.TOXICITY_FLAG_THRESHOLD)) ??
-    DEFAULT_RULES.toxicityFlagThreshold;
+  const toxicityRemoveThreshold = validateThreshold(
+    "toxicityRemoveThreshold",
+    await settings.get<number>(SETTINGS.TOXICITY_REMOVE_THRESHOLD),
+    DEFAULT_RULES.toxicityRemoveThreshold
+  );
+  let toxicityFlagThreshold = validateThreshold(
+    "toxicityFlagThreshold",
+    await settings.get<number>(SETTINGS.TOXICITY_FLAG_THRESHOLD),
+    DEFAULT_RULES.toxicityFlagThreshold
+  );
 
-  let spamRemoveThreshold =
-    (await settings.get<number>(SETTINGS.SPAM_REMOVE_THRESHOLD)) ??
-    DEFAULT_RULES.spamRemoveThreshold;
-  let spamFlagThreshold =
-    (await settings.get<number>(SETTINGS.SPAM_FLAG_THRESHOLD)) ??
-    DEFAULT_RULES.spamFlagThreshold;
+  const spamRemoveThreshold = validateThreshold(
+    "spamRemoveThreshold",
+    await settings.get<number>(SETTINGS.SPAM_REMOVE_THRESHOLD),
+    DEFAULT_RULES.spamRemoveThreshold
+  );
+  let spamFlagThreshold = validateThreshold(
+    "spamFlagThreshold",
+    await settings.get<number>(SETTINGS.SPAM_FLAG_THRESHOLD),
+    DEFAULT_RULES.spamFlagThreshold
+  );
 
-  const spamMode =
-    (await settings.get<string>(SETTINGS.SPAM_MODE)) ?? DEFAULT_RULES.spamMode;
+  const spamMode = validateSpamMode(
+    (await settings.get<string>(SETTINGS.SPAM_MODE)) ?? DEFAULT_RULES.spamMode
+  );
 
-  const botFlagThreshold =
-    (await settings.get<number>(SETTINGS.BOT_FLAG_THRESHOLD)) ??
-    DEFAULT_RULES.botFlagThreshold;
+  const botFlagThreshold = validateThreshold(
+    "botFlagThreshold",
+    await settings.get<number>(SETTINGS.BOT_FLAG_THRESHOLD),
+    DEFAULT_RULES.botFlagThreshold
+  );
 
   // ── Validate threshold ordering ──────────────────────────────────
   // Edge case from story spec: if remove < flag, clamp flag down to
@@ -126,6 +138,34 @@ async function loadAndValidate(
 // ---------------------------------------------------------------------------
 
 /**
+ * Range-check a threshold (COR-2). Unset, non-numeric, and ≤ 0 values fall
+ * back to the default: a threshold of 0 would act on every comment,
+ * including those whose AI call failed and returned zero scores. Values
+ * above 1 are kept (scores never exceed 1, so the action is effectively
+ * off) but logged, since the settings form now rejects them.
+ */
+export function validateThreshold(
+  label: string,
+  value: unknown,
+  fallback: number
+): number {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    console.warn(
+      `[rules] ${label}: invalid threshold ${JSON.stringify(value)} — ` +
+        `using default ${fallback}.`
+    );
+    return fallback;
+  }
+  if (value > 1) {
+    console.warn(
+      `[rules] ${label}: threshold ${value} is above 1, so this action never fires.`
+    );
+  }
+  return value;
+}
+
+/**
  * If the remove threshold is lower than the flag threshold, clamp the
  * flag threshold down and log a warning.  Returns the (possibly clamped)
  * flag threshold.
@@ -144,6 +184,19 @@ export function validateThresholdPair(
     return removeThreshold;
   }
   return flagThreshold;
+}
+
+/**
+ * Validate and normalise the spam mode string. Anything other than
+ * "remove" behaves as the safe "flag" mode.
+ */
+export function validateSpamMode(raw: string): SpamMode {
+  const normalised = raw.trim().toLowerCase();
+  if (normalised === "flag" || normalised === "remove") {
+    return normalised;
+  }
+  console.warn(`[rules] Unknown spam mode "${raw}" — falling back to "flag".`);
+  return "flag";
 }
 
 /**

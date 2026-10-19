@@ -8,10 +8,35 @@ import { Devvit, SettingScope } from "@devvit/public-api";
 import {
   SETTINGS,
   DEFAULT_GEMINI_MODEL,
-  DEFAULT_AI_PROVIDER,
-  DEFAULT_JEV_API_HOST,
-  DEFAULT_JEV_MODEL,
 } from "./types.js";
+
+// ---------------------------------------------------------------------------
+// Validators (COR-2) — run when a moderator saves the settings form.
+// `rules.ts` re-checks at runtime for values saved before these existed.
+// ---------------------------------------------------------------------------
+
+/** Reject thresholds outside (0, 1]; 0 would act on every comment. */
+export function validateThresholdSetting({
+  value,
+}: {
+  value: number | undefined;
+}): string | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isFinite(value) || value <= 0 || value > 1) {
+    return "Enter a number greater than 0 and at most 1 (e.g. 0.75).";
+  }
+  return undefined;
+}
+
+/** Build a validator that accepts one of `options` (case-insensitive). */
+export function oneOf(options: readonly string[]) {
+  return ({ value }: { value: string | undefined }): string | undefined => {
+    if (value === undefined || value.trim() === "") return undefined;
+    return options.includes(value.trim().toLowerCase())
+      ? undefined
+      : `Must be one of: ${options.join(", ")}.`;
+  };
+}
 
 Devvit.addSettings([
   // ── Per-installation (subreddit) settings ─────────────────────────
@@ -22,15 +47,6 @@ Devvit.addSettings([
     helpText:
       "When disabled, comments are still received but no analysis or moderation actions are taken.",
     defaultValue: true,
-    scope: SettingScope.Installation,
-  },
-  {
-    type: "string",
-    name: SETTINGS.AI_PROVIDER,
-    label: "AI Model Provider",
-    helpText:
-      "Select 'gemini' for Google Gemini Flash, 'jev' for TypeSafe Jev System 1 fast decision model, or 'dual_run' to run both in parallel and log benchmark comparisons.",
-    defaultValue: DEFAULT_AI_PROVIDER,
     scope: SettingScope.Installation,
   },
   {
@@ -56,8 +72,9 @@ Devvit.addSettings([
     name: SETTINGS.TOXICITY_REMOVE_THRESHOLD,
     label: "Toxicity auto-remove threshold",
     helpText:
-      "Comments with a toxicity score at or above this value are automatically removed. Set to 1.0 to disable auto-removal.",
+      "Comments with a toxicity score at or above this value (0–1) are automatically removed. 1.0 removes only maximum-score comments.",
     defaultValue: 0.85,
+    onValidate: validateThresholdSetting,
     scope: SettingScope.Installation,
   },
   {
@@ -65,8 +82,9 @@ Devvit.addSettings([
     name: SETTINGS.TOXICITY_FLAG_THRESHOLD,
     label: "Toxicity flag-for-review threshold",
     helpText:
-      "Comments with a toxicity score at or above this value (but below the remove threshold) are reported for manual review.",
+      "Comments with a toxicity score at or above this value (0–1, but below the remove threshold) are reported for manual review.",
     defaultValue: 0.60,
+    onValidate: validateThresholdSetting,
     scope: SettingScope.Installation,
   },
   {
@@ -85,8 +103,9 @@ Devvit.addSettings([
     name: SETTINGS.SPAM_REMOVE_THRESHOLD,
     label: "Spam auto-remove threshold",
     helpText:
-      "Comments with a spam score at or above this value are removed (only when spam mode is 'remove'). Set to 1.0 to disable.",
+      "Comments with a spam score (0–1) at or above this value are removed, only when spam mode is 'remove'.",
     defaultValue: 0.80,
+    onValidate: validateThresholdSetting,
     scope: SettingScope.Installation,
   },
   {
@@ -94,8 +113,9 @@ Devvit.addSettings([
     name: SETTINGS.SPAM_FLAG_THRESHOLD,
     label: "Spam flag-for-review threshold",
     helpText:
-      "Comments with a spam score at or above this value are reported for manual review.",
+      "Comments with a spam score (0–1) at or above this value are reported for manual review.",
     defaultValue: 0.50,
+    onValidate: validateThresholdSetting,
     scope: SettingScope.Installation,
   },
   {
@@ -105,6 +125,7 @@ Devvit.addSettings([
     helpText:
       "Set to 'flag' (default) to only report spam, or 'remove' to auto-remove spam that exceeds the remove threshold.",
     defaultValue: "flag",
+    onValidate: oneOf(["flag", "remove"]),
     scope: SettingScope.Installation,
   },
   {
@@ -123,8 +144,9 @@ Devvit.addSettings([
     name: SETTINGS.BOT_FLAG_THRESHOLD,
     label: "Bot-likelihood flag threshold",
     helpText:
-      "Comments with a bot-likelihood score at or above this value are flagged for review.",
+      "Comments with an AI bot-likelihood score (0–1) at or above this value are reported for manual review. Never removes or bans.",
     defaultValue: 0.75,
+    onValidate: validateThresholdSetting,
     scope: SettingScope.Installation,
   },
   {
@@ -132,8 +154,9 @@ Devvit.addSettings([
     name: SETTINGS.MODERATION_PROFILE,
     label: "Moderation profile",
     helpText:
-      "Set to 'chill' (default) for relaxed thresholds, or 'strict' for aggressive moderation. Story 15 will add more presets.",
+      "'chill' (default) or 'strict'. Selects the tone of the warning PM template below; it does not change any threshold.",
     defaultValue: "chill",
+    onValidate: oneOf(["chill", "strict"]),
     scope: SettingScope.Installation,
   },
 
@@ -184,31 +207,6 @@ Devvit.addSettings([
     helpText:
       "Gemini model ID. A retired or unknown model makes every analysis fall back to zero scores (no moderation).",
     defaultValue: DEFAULT_GEMINI_MODEL,
-    scope: SettingScope.App,
-  },
-  {
-    type: "string",
-    name: SETTINGS.JEV_API_KEY,
-    label: "TypeSafe Jev API Key",
-    helpText: "API key for TypeSafe Jev System 1 decision model.",
-    isSecret: true,
-    scope: SettingScope.App,
-  },
-  {
-    type: "string",
-    name: SETTINGS.JEV_API_HOST,
-    label: "TypeSafe Jev API Host",
-    helpText:
-      "Hostname for TypeSafe Jev API calls (must match Devvit http config domains).",
-    defaultValue: DEFAULT_JEV_API_HOST,
-    scope: SettingScope.App,
-  },
-  {
-    type: "string",
-    name: SETTINGS.JEV_MODEL,
-    label: "TypeSafe Jev Model",
-    helpText: "Model name or checkpoint for TypeSafe Jev.",
-    defaultValue: DEFAULT_JEV_MODEL,
     scope: SettingScope.App,
   },
 ]);

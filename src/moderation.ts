@@ -1,5 +1,5 @@
 /**
- * Moderation Enforcement – Stories 03 / 04 / 06 / 07 / 08
+ * Moderation Enforcement – Stories 03 / 04 / 05 / 06 / 07 / 08
  *
  * After the AI analysis pipeline scores a comment, this module compares
  * scores against the pre-validated `ModerationRules` snapshot and takes
@@ -11,9 +11,11 @@
  * guarantees both enforceToxicity and enforceSpam see the same config.
  *
  * Story 07 additions:
- *   • Every removal is written to the mod log with a `botditor` details tag.
- *   • Removed comment IDs are stored in Redis (`removed:<commentId>`) for
- *     deduplication — prevents re-removal on event re-delivery.
+ *   • Every removal gets a removal note (`comment.addRemovalNote`) carrying
+ *     Botditor's reason, visible to moderators in the mod log and queue.
+ *     (This replaced `context.modLog.add()`, which Devvit removed — OPS-3.)
+ *   • Removed comment IDs are stored in Redis (`removed:<commentId>`, 7-day
+ *     TTL) for deduplication — prevents re-removal on event re-delivery.
  *
  * Story 08 additions:
  *   • `flagComment()` now includes a structured reason string with the score
@@ -21,10 +23,13 @@
  *   • Flagged comment IDs are stored in Redis (`flagged:<commentId>`) with a
  *     24-hour TTL — deduplication + persistence for Story 14 stats.
  *
+ * Story 05: `enforceBot()` reports comments whose AI bot-likelihood meets
+ * `botFlagThreshold`. It never removes or bans.
+ *
  * Fail-safe: on any error the function returns "none" — no exception
  * escapes.
  */
-import type { TriggerContext } from "@devvit/public-api";
+import type { Comment, TriggerContext } from "@devvit/public-api";
 import type {
   AnalysisResult,
   ModerationAction,
@@ -32,7 +37,7 @@ import type {
   SpamResult,
   ModerationRules,
 } from "./types.js";
-import { REDIS_KEYS, FLAG_DEDUP_TTL_S } from "./types.js";
+import { REDIS_KEYS, FLAG_DEDUP_TTL_S, REMOVED_DEDUP_TTL_S } from "./types.js";
 
 /** Reddit APIs enforce a 100-char limit on reason/description fields. */
 const REASON_MAX_LEN = 100;
@@ -211,18 +216,66 @@ async function enforceSpamInner(
 }
 
 // ---------------------------------------------------------------------------
+// Bot-likelihood enforcement (Story 05)
+// ---------------------------------------------------------------------------
+
+/**
+ * Report a comment for review when its AI bot-likelihood meets
+ * `botFlagThreshold`. Flag-only by design: the AI signal comes from the
+ * comment text alone, so a human makes the call.
+ *
+ * Shares the `flagged:<commentId>` dedup key with toxicity and spam, so a
+ * comment already reported for another reason isn't reported twice.
+ *
+ * Always returns a valid `ModerationAction`. On any error returns `"none"`.
+ */
+export async function enforceBot(
+  record: IngestedComment,
+  analysis: AnalysisResult,
+  rules: ModerationRules,
+  context: TriggerContext
+): Promise<ModerationAction> {
+  try {
+    const { botFlagThreshold, dryRun } = rules;
+    const { botLikelihood, reason } = analysis;
+
+    if (botLikelihood < botFlagThreshold) {
+      return "none";
+    }
+
+    if (dryRun) {
+      console.log(
+        `[moderation] DRY RUN: Would bot-flag comment ${record.commentId} ` +
+        `(bot=${botLikelihood}, threshold=${botFlagThreshold}, reason="${reason}")`
+      );
+      return "dry_run_bot_flag";
+    }
+
+    const flagReason = `[botditor] bot-likelihood=${botLikelihood} — ${reason}`;
+    const result = await flagComment(record, flagReason, botLikelihood, context);
+    return result === "flagged" ? "bot_flagged" : "none";
+  } catch (err) {
+    console.error(
+      `[moderation] Unexpected error enforcing bot-likelihood for ${record.commentId}:`,
+      err instanceof Error ? err.message : err
+    );
+    return "none";
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Actions (internal helpers)
 // ---------------------------------------------------------------------------
 
 /**
- * Remove a comment, write to the mod log, and set a dedup key (Story 07).
+ * Remove a comment, attach a removal note, and set a dedup key (Story 07).
  *
  * Deduplication: if `removed:<commentId>` already exists in Redis, the
  * removal is skipped — prevents double-removal on event re-delivery.
  *
- * Mod log: every successful removal is recorded with a `botditor` details
- * tag.  Mod-log failures are caught and logged — they never prevent the
- * removal itself from being recorded as successful.
+ * Removal note: every successful removal gets a mod-facing note with
+ * Botditor's reason. Note failures are caught and logged — they never
+ * prevent the removal itself from being recorded as successful.
  */
 async function removeComment(
   record: IngestedComment,
@@ -248,8 +301,9 @@ async function removeComment(
   }
 
   // ── Remove the comment ────────────────────────────────────────────
+  let comment: Comment;
   try {
-    const comment = await context.reddit.getCommentById(record.commentId);
+    comment = await context.reddit.getCommentById(record.commentId);
     await comment.remove();
     console.log(
       `[moderation] Removed comment ${record.commentId} by u/${record.authorName} — "${reason}"`
@@ -269,20 +323,17 @@ async function removeComment(
     return "none";
   }
 
-  // ── Write to mod log (Story 07) ───────────────────────────────────
-  // Note: `modLog` is omitted from `TriggerContext` types but available
-  // at runtime (same pattern as nuke.ts).  Cast to access safely.
+  // ── Removal note (Story 07 / OPS-3) ───────────────────────────────
+  // Mod-facing only. `reasonId: ""` means no subreddit removal reason is
+  // attached (which would message the user); the note holds our reason.
   try {
-    const ctx = context as unknown as { modLog: { add: (entry: Record<string, string>) => Promise<void> } };
-    await ctx.modLog.add({
-      action: "removecomment",
-      target: record.commentId,
-      details: "botditor",
-      description: truncateReason(reason),
+    await comment.addRemovalNote({
+      reasonId: "",
+      modNote: truncateReason(`[botditor] ${reason}`),
     });
   } catch (err) {
     console.error(
-      `[moderation] Failed to write mod log for ${record.commentId}:`,
+      `[moderation] Failed to add removal note for ${record.commentId}:`,
       err instanceof Error ? err.message : err
     );
   }
@@ -290,7 +341,9 @@ async function removeComment(
   // ── Set dedup key (Story 07) ──────────────────────────────────────
   try {
     const dedupKey = REDIS_KEYS.removedComment(record.commentId);
-    await context.redis.set(dedupKey, "1");
+    await context.redis.set(dedupKey, "1", {
+      expiration: new Date(Date.now() + REMOVED_DEDUP_TTL_S * 1000),
+    });
   } catch (err) {
     console.error(
       `[moderation] Failed to set dedup key for ${record.commentId}:`,

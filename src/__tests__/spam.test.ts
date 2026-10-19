@@ -7,10 +7,11 @@ import {
   parseDomainList,
   matchesDomainList,
   simpleHash,
+  mergeSpamSignals,
 } from "../spam.js";
 import { enforceSpam } from "../moderation.js";
 import { SETTINGS, DEFAULT_RULES } from "../types.js";
-import type { IngestedComment, SpamResult, ModerationRules } from "../types.js";
+import type { AnalysisResult, IngestedComment, SpamResult, ModerationRules } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -465,5 +466,72 @@ describe("enforceSpam", () => {
 
     const action = await enforceSpam(record, spamResult, makeRules(), context);
     expect(action).toBe("none");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mergeSpamSignals (Story 04 / COR-3)
+// ---------------------------------------------------------------------------
+
+describe("mergeSpamSignals", () => {
+  const ai = (spamScore: number): AnalysisResult => ({
+    toxicityScore: 0,
+    spamScore,
+    botLikelihood: 0,
+    sentiment: "neutral",
+    reason: "promotes a crypto giveaway",
+  });
+  const rule = (score: number, reasons: string[] = [], blockedDomain = false): SpamResult => ({
+    score,
+    reasons,
+    blockedDomain,
+  });
+
+  it("uses the AI score when the rule score is below 0.5 and the AI is higher", () => {
+    const merged = mergeSpamSignals(rule(0.3, ["new account"]), ai(0.82));
+    expect(merged.score).toBe(0.82);
+    expect(merged.reasons).toEqual([
+      "new account",
+      "AI spam score 0.82: promotes a crypto giveaway",
+    ]);
+    expect(merged.blockedDomain).toBe(false);
+  });
+
+  it("keeps a confident rule score (≥ 0.5) even when the AI disagrees", () => {
+    const r = rule(0.5, ["repeated body"]);
+    expect(mergeSpamSignals(r, ai(0.95))).toBe(r);
+    expect(mergeSpamSignals(r, ai(0))).toBe(r);
+  });
+
+  it("keeps the rule result when the AI score is not higher", () => {
+    const r = rule(0.4, ["many URLs"]);
+    expect(mergeSpamSignals(r, ai(0.2))).toBe(r);
+  });
+
+  it("never lets the AI override a blocked-domain removal", () => {
+    const r = rule(1, ["blocked domain: https://bit.ly/x"], true);
+    expect(mergeSpamSignals(r, ai(0))).toBe(r);
+  });
+
+  it("is unaffected by an AI failure (all-zero fallback scores)", () => {
+    const r = rule(0);
+    expect(mergeSpamSignals(r, ai(0))).toBe(r);
+  });
+
+  it("lets enforceSpam act on the AI score in flag mode", async () => {
+    const reportFn = vi.fn().mockResolvedValue(undefined);
+    const context = {
+      reddit: {
+        getCommentById: vi.fn().mockResolvedValue({ id: "t1_x" }),
+        report: reportFn,
+      },
+      redis: { get: vi.fn().mockResolvedValue(null), set: vi.fn(), expire: vi.fn() },
+    } as unknown as TriggerContext;
+
+    const merged = mergeSpamSignals(rule(0), ai(0.7));
+    const action = await enforceSpam(makeRecord(), merged, makeRules(), context);
+
+    expect(action).toBe("spam_flagged");
+    expect(reportFn).toHaveBeenCalled();
   });
 });

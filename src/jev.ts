@@ -1,112 +1,88 @@
 /**
- * TypeSafe Jev Analysis Provider
+ * TypeSafe Jev client — offline benchmarking only.
  *
- * Calls the TypeSafe Jev System 1 decision engine to probabilistically score
- * Reddit comments for toxicity, spam, and bot-likelihood in sub-second time.
+ * The published app never calls Jev: Devvit's fetch policy permits only
+ * OpenAI and Google Gemini as AI providers, and domain requests are reviewed
+ * for playtests too, so `api.typesafe.ai` is deliberately absent from
+ * `Devvit.configure({ http })`. This module is imported only by the local
+ * benchmark (`bench/`, `npm run bench`) and never bundled into the app.
+ *
+ * Contract (docs.typesafe.ai/api): `POST /v1/systemone` with `model`, a
+ * `state` (the content to judge) and a `questions` map; the response carries
+ * an `answers` map keyed by the same question IDs. Jev returns typed
+ * judgments — a `noul` is the probability that a condition holds, a `choice`
+ * picks one option — and never generates text, so the human-readable
+ * `reason` is composed in code from the strongest signal.
  *
  * Design decisions:
- *   • Every code path returns a valid AnalysisResult — never throws.
- *   • Fast timeout (JEV_TIMEOUT_MS = 3s) ensures event loop responsiveness.
- *   • On any error (missing key, network, parse, timeout), safe fallback is returned
- *     and logged; no exception escapes.
- *   • Results are cached in Redis for 1 hour to prevent redundant calls.
- *   • Supports flexible decision payload format from TypeSafe Jev (both nested and flat).
+ *   • Context-free: needs only `fetch`, so it runs in Node.
+ *   • Never throws; failures return the zero-score fallback, and
+ *     `isJevFailure()` tells them apart from real decisions.
+ *   • Only the comment text and subreddit name are sent — no usernames or
+ *     IDs (data minimisation for the third-party processor).
  */
-import type { TriggerContext } from "@devvit/public-api";
-import type { IngestedComment, AnalysisResult, Sentiment } from "./types.js";
+import type { AnalysisResult } from "./types.js";
 import {
   ANALYSIS_FALLBACK,
-  REDIS_KEYS,
-  SETTINGS,
-  ANALYSIS_CACHE_TTL_MS,
   DEFAULT_JEV_API_HOST,
-  DEFAULT_JEV_MODEL,
+  JEV_API_PATH,
   JEV_TIMEOUT_MS,
+  MAX_PROMPT_BODY_LENGTH,
 } from "./types.js";
-import { isEmojiOnly, withTimeout, validateScore, validateSentiment } from "./ai.js";
+import { withTimeout, validateScore, validateSentiment } from "./ai.js";
 
 // ---------------------------------------------------------------------------
-// Public entry point
+// Failure detection
 // ---------------------------------------------------------------------------
+
+/** `reason` values returned when Jev produced no decision. */
+const JEV_FAILURE_REASONS = new Set([
+  "timeout or network error",
+  "response read error",
+  "parse error",
+]);
 
 /**
- * Analyze a comment via the TypeSafe Jev API.
- *
- * Always returns a valid `AnalysisResult`. On any error the safe fallback is
- * returned and the issue is logged — no exception escapes.
+ * True when `result` is a fallback from a failed Jev call rather than a
+ * real decision. Reasons for real decisions are composed by
+ * `composeReason()`, so they can never collide with these.
  */
-export async function analyzeCommentWithJev(
-  record: IngestedComment,
-  context: TriggerContext
-): Promise<AnalysisResult> {
-  try {
-    return await analyzeCommentWithJevInner(record, context);
-  } catch (err) {
-    console.error(
-      `[jev] Unexpected error analysing comment ${record.commentId}:`,
-      err instanceof Error ? err.message : err
-    );
-    return { ...ANALYSIS_FALLBACK, reason: "unexpected jev error" };
-  }
+export function isJevFailure(result: AnalysisResult): boolean {
+  return (
+    JEV_FAILURE_REASONS.has(result.reason) ||
+    result.reason.startsWith("jev api error")
+  );
 }
 
 // ---------------------------------------------------------------------------
-// Internal implementation
+// HTTP call
 // ---------------------------------------------------------------------------
 
-async function analyzeCommentWithJevInner(
-  record: IngestedComment,
-  context: TriggerContext
+/** Credentials, host and model for one Jev call. */
+export interface JevConfig {
+  apiKey: string;
+  model: string;
+  /** Defaults to `DEFAULT_JEV_API_HOST`. */
+  host?: string;
+}
+
+/** What Jev is asked to judge. */
+export interface JevInput {
+  text: string;
+  subreddit: string;
+}
+
+/**
+ * POST one comment to TypeSafe System One and parse the answers. Never
+ * throws. `label` identifies the item in logs — never the comment text.
+ */
+export async function requestJevAnalysis(
+  input: JevInput,
+  { apiKey, model, host = DEFAULT_JEV_API_HOST }: JevConfig,
+  label: string
 ): Promise<AnalysisResult> {
-  const { redis, settings } = context;
+  const url = `https://${host}${JEV_API_PATH}`;
 
-  // ── 1. Fast path: emoji-only / empty body ───────────────────────
-  if (isEmojiOnly(record.body)) {
-    console.log(
-      `[jev] Comment ${record.commentId} is emoji-only — using heuristic scores`
-    );
-    return {
-      toxicityScore: 0,
-      spamScore: 0.1,
-      botLikelihood: 0.2,
-      sentiment: "neutral",
-      reason: "emoji-only comment",
-    };
-  }
-
-  // ── 2. Cache check ──────────────────────────────────────────────
-  const cacheKey = REDIS_KEYS.analysisCache(record.commentId);
-  try {
-    const cached = await redis.get(cacheKey);
-    if (cached) {
-      console.log(`[jev] Cache hit for comment ${record.commentId}`);
-      return JSON.parse(cached) as AnalysisResult;
-    }
-  } catch {
-    // Cache miss or parse error — proceed with fresh call
-  }
-
-  // ── 3. Read settings ────────────────────────────────────────────
-  const apiKey = await settings.get<string>(SETTINGS.JEV_API_KEY);
-  if (!apiKey) {
-    console.warn(
-      "[jev] No TypeSafe Jev API key configured — returning safe fallback"
-    );
-    return { ...ANALYSIS_FALLBACK, reason: "no jev api key configured" };
-  }
-
-  const host =
-    (await settings.get<string>(SETTINGS.JEV_API_HOST))?.trim() ||
-    DEFAULT_JEV_API_HOST;
-  const model =
-    (await settings.get<string>(SETTINGS.JEV_MODEL))?.trim() ||
-    DEFAULT_JEV_MODEL;
-
-  // ── 4. Build request & call API ─────────────────────────────────
-  const url = `https://${host}/v1/decide`;
-  const requestBody = buildJevRequestBody(record, model);
-
-  const startTime = Date.now();
   let response: Response;
   try {
     response = await withTimeout(
@@ -115,22 +91,18 @@ async function analyzeCommentWithJevInner(
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${apiKey}`,
-          "x-api-key": apiKey,
         },
-        body: JSON.stringify(requestBody),
+        body: JSON.stringify(buildJevRequestBody(input, model)),
       }),
       JEV_TIMEOUT_MS
     );
   } catch (err) {
-    const duration = Date.now() - startTime;
     console.error(
-      `[jev] Request timed out or failed after ${duration} ms for comment ${record.commentId}:`,
+      `[jev] Request timed out or failed for ${label}:`,
       err instanceof Error ? err.message : err
     );
     return { ...ANALYSIS_FALLBACK, reason: "timeout or network error" };
   }
-
-  const durationMs = Date.now() - startTime;
 
   if (!response.ok) {
     let errorBody = "";
@@ -140,46 +112,24 @@ async function analyzeCommentWithJevInner(
       /* ignore */
     }
     console.error(
-      `[jev] API returned status ${response.status} for comment ${record.commentId}`,
+      `[jev] API returned status ${response.status} for ${label} (model=${model})`,
       errorBody ? `— body: ${errorBody.slice(0, 500)}` : ""
     );
     return { ...ANALYSIS_FALLBACK, reason: `jev api error ${response.status}` };
   }
 
-  // ── 5. Parse response ───────────────────────────────────────────
   let responseText: string;
   try {
     responseText = await response.text();
   } catch (err) {
     console.error(
-      `[jev] Failed to read response body for comment ${record.commentId}:`,
+      `[jev] Failed to read response body for ${label}:`,
       err instanceof Error ? err.message : err
     );
     return { ...ANALYSIS_FALLBACK, reason: "response read error" };
   }
 
-  const result = parseJevResponse(responseText);
-
-  // ── 6. Cache result ─────────────────────────────────────────────
-  if (result.reason !== "parse error") {
-    try {
-      await redis.set(cacheKey, JSON.stringify(result));
-      await redis.expire(cacheKey, Math.floor(ANALYSIS_CACHE_TTL_MS / 1000));
-    } catch (err) {
-      console.warn(
-        `[jev] Failed to cache result for comment ${record.commentId}:`,
-        err instanceof Error ? err.message : err
-      );
-    }
-  }
-
-  console.log(
-    `[jev] Decision complete in ${durationMs}ms for comment ${record.commentId}: ` +
-    `toxicity=${result.toxicityScore}, spam=${result.spamScore}, ` +
-    `bot=${result.botLikelihood}, sentiment=${result.sentiment}, reason="${result.reason}"`
-  );
-
-  return result;
+  return parseJevResponse(responseText);
 }
 
 // ---------------------------------------------------------------------------
@@ -187,55 +137,85 @@ async function analyzeCommentWithJevInner(
 // ---------------------------------------------------------------------------
 
 /**
- * Construct the state-based decision request for TypeSafe Jev.
+ * Question IDs sent to Jev. IDs are for code only and are not shown to the
+ * model, so each question carries its full meaning in `instructions`.
+ */
+export const JEV_QUESTIONS = {
+  toxic: {
+    type: "noul",
+    instructions:
+      "Is `comment.text` insulting, hateful, harassing or threatening toward a person or group?",
+    criteria: {
+      true: "Insults, slurs, threats, or personal attacks on another user or a group",
+      false: "Friendly, neutral, critical-but-civil, or light banter with no target",
+    },
+  },
+  spam: {
+    type: "noul",
+    instructions:
+      "Is `comment.text` spam: unsolicited advertising, self-promotion, scams, or promotional links unrelated to the discussion?",
+    criteria: {
+      true: "Advertising, referral or affiliate links, scams, or off-topic self-promotion",
+      false: "A genuine contribution to the discussion, including relevant links",
+    },
+  },
+  bot: {
+    type: "noul",
+    instructions:
+      "Does `comment.text` read as automated or machine-generated rather than written by a person engaging with the discussion?",
+    criteria: {
+      true: "Templated, generic, or boilerplate text that ignores the thread, typical of bots",
+      false: "Written by a person responding to the conversation",
+    },
+  },
+  sentiment: {
+    type: "choice",
+    instructions: "What is the overall sentiment of `comment.text`?",
+    criteria: {
+      positive: "Approving, friendly, enthusiastic, or grateful",
+      neutral: "Factual, mixed, or without clear emotional tone",
+      negative: "Disapproving, angry, sad, or hostile",
+    },
+  },
+} as const;
+
+/**
+ * Construct the System One request for a comment. The text is truncated
+ * like the Gemini prompt; Jev's per-question limit is far above it.
  */
 export function buildJevRequestBody(
-  record: IngestedComment,
+  { text, subreddit }: JevInput,
   model: string
 ): Record<string, unknown> {
+  const truncated =
+    text.length > MAX_PROMPT_BODY_LENGTH
+      ? text.slice(0, MAX_PROMPT_BODY_LENGTH) + " [truncated]"
+      : text;
+
   return {
     model,
-    target: "reddit_comment",
-    state: {
-      commentId: record.commentId,
-      body: record.body,
-      subreddit: record.subredditName,
-      author: record.authorName,
-    },
-    decision_schema: {
-      toxicityScore: "probability",
-      spamScore: "probability",
-      botLikelihood: "probability",
-      sentiment: ["positive", "neutral", "negative"],
-      reason: "string",
-    },
+    state: { comment: { text: truncated, subreddit } },
+    questions: JEV_QUESTIONS,
   };
 }
 
 /**
- * Parse and validate the typed response from TypeSafe Jev.
- * Supports both direct top-level fields and nested `decision` envelope.
+ * Parse and validate a System One response into an AnalysisResult.
+ * Returns the fallback with reason "parse error" if any answer is missing
+ * or malformed.
  */
 export function parseJevResponse(rawText: string): AnalysisResult {
   try {
-    const raw = JSON.parse(rawText) as Record<string, unknown>;
-    const data =
-      raw && typeof raw.decision === "object" && raw.decision !== null
-        ? (raw.decision as Record<string, unknown>)
-        : raw;
-
-    if (!data || typeof data !== "object") {
+    const raw = JSON.parse(rawText) as { answers?: Record<string, unknown> };
+    const answers = raw?.answers;
+    if (!answers || typeof answers !== "object") {
       return { ...ANALYSIS_FALLBACK, reason: "parse error" };
     }
 
-    const toxicityScore = validateScore(data.toxicityScore);
-    const spamScore = validateScore(data.spamScore);
-    const botLikelihood = validateScore(data.botLikelihood);
-    const sentiment = validateSentiment(data.sentiment);
-    const reason =
-      typeof data.reason === "string" && data.reason.trim().length > 0
-        ? data.reason.slice(0, 500)
-        : "jev decision";
+    const toxicityScore = validateScore(noulValue(answers.toxic));
+    const spamScore = validateScore(noulValue(answers.spam));
+    const botLikelihood = validateScore(noulValue(answers.bot));
+    const sentiment = validateSentiment(choiceValue(answers.sentiment));
 
     if (
       toxicityScore === null ||
@@ -251,9 +231,42 @@ export function parseJevResponse(rawText: string): AnalysisResult {
       spamScore,
       botLikelihood,
       sentiment,
-      reason,
+      reason: composeReason(toxicityScore, spamScore, botLikelihood),
     };
   } catch {
     return { ...ANALYSIS_FALLBACK, reason: "parse error" };
   }
+}
+
+/** Probability from a `noul` answer, or undefined if the shape is wrong. */
+function noulValue(answer: unknown): unknown {
+  if (!answer || typeof answer !== "object") return undefined;
+  const a = answer as { type?: unknown; noul?: unknown };
+  return a.type === "noul" ? a.noul : undefined;
+}
+
+/** Selected option from a `choice` answer, or undefined if malformed. */
+function choiceValue(answer: unknown): unknown {
+  if (!answer || typeof answer !== "object") return undefined;
+  const a = answer as { type?: unknown; choice?: unknown };
+  return a.type === "choice" ? a.choice : undefined;
+}
+
+/**
+ * Build a short, user-safe reason from the strongest signal. It ends up in
+ * report reasons and in the `{{issue}}` of warning PMs, so it describes the
+ * concern in plain words rather than exposing raw probabilities.
+ */
+export function composeReason(
+  toxicityScore: number,
+  spamScore: number,
+  botLikelihood: number
+): string {
+  const signals: Array<[number, string]> = [
+    [toxicityScore, "insulting, hateful or harassing language"],
+    [spamScore, "spam or unsolicited promotion"],
+    [botLikelihood, "automated or bot-like content"],
+  ];
+  const [score, label] = signals.reduce((a, b) => (b[0] > a[0] ? b : a));
+  return score >= 0.5 ? `likely ${label}` : "no policy concern detected";
 }

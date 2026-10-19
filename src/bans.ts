@@ -4,9 +4,11 @@
  * Handles the "Ban User" menu action available on comments (moderator-only).
  * The flow mirrors the permission-check pattern in `nuke.ts`:
  *   1. Validate the acting moderator has `all` or `access` permissions.
- *   2. Execute the ban via `context.reddit.banUser()`.
- *   3. Record the action in the mod log (`context.modLog.add()`).
- *   4. Persist a ban record in Redis for Story 14 analytics.
+ *   2. Execute the ban via `context.reddit.banUser()`. The ban runs as the
+ *      app account, so the acting moderator is recorded in the mod-facing
+ *      `note` (shown in the mod log) — this replaced the `context.modLog`
+ *      client that Devvit removed (OPS-3).
+ *   3. Persist a ban record in Redis for Story 14 analytics.
  *
  * All errors are caught and returned as `{ success: false, message }` — no
  * exception escapes.
@@ -19,9 +21,11 @@ export type BanUserProps = {
   username: string;
   /** Subreddit name (without r/ prefix). */
   subredditName: string;
-  /** Human-readable ban reason shown to the user. */
+  /** Ban reason — mod-facing, shown in the Banned Users list. */
   reason: string;
-  /** Ban duration in days. 0 = permanent. */
+  /** Optional message to the banned user ("Note from the moderators"). */
+  message?: string;
+  /** Ban duration in days. 0 = permanent, otherwise 1–999. */
   duration: number;
   /** Optional moderator note (internal, not shown to user). */
   note: string;
@@ -35,7 +39,7 @@ export type BanResult = {
 };
 
 /**
- * Execute a user ban with full permission checking, mod log, and analytics.
+ * Execute a user ban with permission checking, an audit note, and analytics.
  *
  * Always returns a `BanResult` — never throws.
  */
@@ -63,7 +67,15 @@ async function handleBanUserInner(
   props: BanUserProps,
   context: Devvit.Context
 ): Promise<BanResult> {
-  const { username, subredditName, reason, duration, note, commentId } = props;
+  const { username, subredditName, reason, message, duration, note, commentId } = props;
+
+  // Reddit accepts 0 (permanent) or 1–999 days
+  if (!Number.isInteger(duration) || duration < 0 || duration > MAX_BAN_DAYS) {
+    return {
+      success: false,
+      message: `Duration must be 0 (permanent) or 1–${MAX_BAN_DAYS} days.`,
+    };
+  }
 
   // ── 1. Permission check ─────────────────────────────────────────────
   const user = await context.reddit.getCurrentUser();
@@ -92,13 +104,17 @@ async function handleBanUserInner(
 
   // ── 2. Execute ban ──────────────────────────────────────────────────
   try {
-    const truncatedReason = reason ? truncateModLog(reason) : undefined;
+    const modNote = note
+      ? `Banned by u/${user.username} via botditor: ${note}`
+      : `Banned by u/${user.username} via botditor`;
     await context.reddit.banUser({
       subredditName,
       username,
-      reason: truncatedReason,
+      reason: reason ? truncate(reason, BAN_REASON_MAX_LEN) : undefined,
+      message: message || undefined,
       duration: duration > 0 ? duration : undefined, // undefined = permanent
-      note: note || undefined,
+      note: truncate(modNote, BAN_NOTE_MAX_LEN),
+      context: commentId || undefined,
     });
     console.log(
       `[bans] Banned u/${username} from r/${subredditName} ` +
@@ -138,27 +154,7 @@ async function handleBanUserInner(
     return { success: false, message: `Ban failed: ${msg}` };
   }
 
-  // ── 3. Mod log ──────────────────────────────────────────────────────
-  try {
-    const ctx = context as unknown as { modLog: { add: (entry: Record<string, string>) => Promise<void> } };
-    await ctx.modLog.add({
-      action: "banuser",
-      target: commentId,
-      details: "botditor",
-      description: truncateModLog(
-        `u/${user.username} banned u/${username} ` +
-        `(${duration === 0 ? "permanent" : `${duration}d`}) — ${reason}`
-      ),
-    });
-  } catch (err) {
-    // Non-fatal: ban succeeded, log failure is recorded only
-    console.error(
-      `[bans] Failed to write mod log for ban of u/${username}:`,
-      err instanceof Error ? err.message : err
-    );
-  }
-
-  // ── 4. Analytics persistence (kvStore for Story 14) ─────────────────
+  // ── 3. Analytics persistence (kvStore for Story 14) ─────────────────
   try {
     const now = Date.now();
     const recordKey = REDIS_KEYS.banRecord(username, now);
@@ -195,8 +191,14 @@ async function handleBanUserInner(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Reddit mod-log description has a 100-char limit. */
-function truncateModLog(text: string, maxLen = 100): string {
+/** Reddit's ban duration limit, in days. */
+const MAX_BAN_DAYS = 999;
+
+/** Reddit's `/api/friend` limits: `ban_reason` 100 chars, `note` 300. */
+const BAN_REASON_MAX_LEN = 100;
+const BAN_NOTE_MAX_LEN = 300;
+
+function truncate(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text;
   return text.slice(0, maxLen - 1) + "…";
 }

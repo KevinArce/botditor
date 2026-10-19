@@ -6,16 +6,13 @@
  */
 
 // ---------------------------------------------------------------------------
-// AI Provider & Analysis result (produced by Story 02 / Jev Integration)
+// Analysis result (produced by Story 02)
 // ---------------------------------------------------------------------------
-
-/** Supported AI model providers for comment analysis. */
-export type AIProvider = "gemini" | "jev" | "dual_run";
 
 /** Sentiment label returned by the AI model. */
 export type Sentiment = "positive" | "neutral" | "negative";
 
-/** Structured output from the Gemini analysis pipeline (Story 02). */
+/** Structured output from the AI analysis pipeline (Gemini; Jev in the benchmark). */
 export interface AnalysisResult {
   toxicityScore: number; // 0–1
   spamScore: number; // 0–1
@@ -40,6 +37,9 @@ export const ANALYSIS_FALLBACK: AnalysisResult = {
 /** Moderation profile preset. */
 export type ModerationProfile = "strict" | "chill";
 
+/** Spam enforcement mode (Story 04). */
+export type SpamMode = "flag" | "remove";
+
 /** Validated, centralised snapshot of all moderation settings. */
 export interface ModerationRules {
   enabled: boolean;
@@ -49,7 +49,7 @@ export interface ModerationRules {
   toxicityFlagThreshold: number;
   spamRemoveThreshold: number;
   spamFlagThreshold: number;
-  spamMode: string;
+  spamMode: SpamMode;
   botFlagThreshold: number;
 }
 
@@ -96,7 +96,9 @@ export type ModerationAction =
   | "spam_removed"         // Auto-removed due to spam (Story 04)
   | "spam_flagged"         // Reported for spam review (Story 04)
   | "dry_run_spam_remove"  // Would spam-remove, but dry-run is on
-  | "dry_run_spam_flag";   // Would spam-flag, but dry-run is on
+  | "dry_run_spam_flag"    // Would spam-flag, but dry-run is on
+  | "bot_flagged"          // Reported for bot-likelihood review (Story 05)
+  | "dry_run_bot_flag";    // Would bot-flag, but dry-run is on
 
 // ---------------------------------------------------------------------------
 // Ingested comment record
@@ -184,14 +186,6 @@ export const SETTINGS = {
   WARNING_TEMPLATE_STRICT: "warningTemplateStrict",
   /** Warning PM template for chill profile (Story 09). */
   WARNING_TEMPLATE_CHILL: "warningTemplateChill",
-  /** Active AI Provider: "gemini" | "jev" | "dual_run" */
-  AI_PROVIDER: "aiProvider",
-  /** TypeSafe Jev API Key (global secret). */
-  JEV_API_KEY: "jevApiKey",
-  /** TypeSafe Jev API Host. */
-  JEV_API_HOST: "jevApiHost",
-  /** TypeSafe Jev Model name or checkpoint. */
-  JEV_MODEL: "jevModel",
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -210,7 +204,7 @@ export const REDIS_KEYS = {
   /** Counter of total comments ingested per subreddit. */
   commentCount: (subredditName: string) =>
     `comments:count:${subredditName.toLowerCase()}`,
-  /** Cached AI analysis result for a comment (Story 02). */
+  /** Cached Gemini analysis result for a comment (Story 02). */
   analysisCache: (commentId: string) => `analysis:cache:${commentId}`,
   /** Tracks a recent comment body hash for duplicate-body detection (Story 04). */
   recentBody: (authorName: string, hash: string) =>
@@ -227,8 +221,6 @@ export const REDIS_KEYS = {
   /** Counter of total bans executed per subreddit (Story 10 / 14). */
   banCount: (subredditName: string) =>
     `bans:count:${subredditName.toLowerCase()}`,
-  /** Side-by-side comparison between Jev and Gemini in dual-run mode. */
-  jevComparison: (commentId: string) => `bench:jev_vs_gemini:${commentId}`,
 } as const;
 
 /** Maximum body length stored in Redis to keep record sizes reasonable. */
@@ -236,9 +228,6 @@ export const MAX_BODY_LENGTH = 4000;
 
 /** Maximum body length sent to the Gemini prompt (Story 02). */
 export const MAX_PROMPT_BODY_LENGTH = 8000;
-
-/** Default AI provider for comment analysis. */
-export const DEFAULT_AI_PROVIDER: AIProvider = "gemini";
 
 /**
  * Default Gemini model (Story 02). Single source of truth for both the
@@ -258,15 +247,23 @@ export const GEMINI_API_HOST = "generativelanguage.googleapis.com";
  */
 export const GEMINI_TIMEOUT_MS = 10_000;
 
-/** Default TypeSafe Jev API host. */
+// TypeSafe Jev — offline benchmark only (`bench/`, `src/jev.ts`). The app
+// never calls it: Devvit permits only OpenAI and Gemini as AI providers.
+
+/** TypeSafe API host. Not declared in `Devvit.configure({ http })`. */
 export const DEFAULT_JEV_API_HOST = "api.typesafe.ai";
 
-/** Default TypeSafe Jev model name. */
-export const DEFAULT_JEV_MODEL = "jev-1";
-
 /**
- * Jev request timeout in milliseconds. Designed for sub-second responses.
+ * Default TypeSafe Jev model. Pinned to a versioned ID rather than the
+ * `jev-latest` alias, because an alias can move to a new release and shift
+ * scores under tuned thresholds (docs.typesafe.ai/models).
  */
+export const DEFAULT_JEV_MODEL = "jev-1.13.0";
+
+/** TypeSafe System One endpoint path (docs.typesafe.ai/api). */
+export const JEV_API_PATH = "/v1/systemone";
+
+/** Jev request timeout in milliseconds. */
 export const JEV_TIMEOUT_MS = 3_000;
 
 /** Cache TTL for analysis results — 1 hour in milliseconds (Story 02). */
@@ -278,27 +275,12 @@ export const FLAG_DEDUP_TTL_S = 86_400;
 /** Warning cooldown TTL — 48 hours in seconds (Story 09). */
 export const WARNING_COOLDOWN_TTL_S = 172_800;
 
-/** Structured dual-run benchmark comparison data. */
-export interface DualRunBenchmarkRecord {
-  commentId: string;
-  timestamp: string;
-  jev: {
-    latencyMs: number;
-    toxicityScore: number;
-    spamScore: number;
-    botLikelihood: number;
-    sentiment: Sentiment;
-    reason: string;
-  };
-  gemini: {
-    latencyMs: number;
-    toxicityScore: number;
-    spamScore: number;
-    botLikelihood: number;
-    sentiment: Sentiment;
-    reason: string;
-  };
-  toxicityDelta: number;
-  latencyDiffMs: number;
-}
+/**
+ * Retention for `comment:<id>` records and `comments:index:<sub>` entries —
+ * 30 days in seconds (COR-4). Keeps per-comment storage bounded against
+ * Devvit's 5 GB per-installation Redis quota.
+ */
+export const COMMENT_TTL_S = 2_592_000;
 
+/** Retention for `removed:<id>` dedup keys — 7 days in seconds (COR-4). */
+export const REMOVED_DEDUP_TTL_S = 604_800;

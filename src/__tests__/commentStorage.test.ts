@@ -8,7 +8,7 @@ import {
   getCommentCount,
 } from "../commentStorage.js";
 import type { IngestedComment } from "../types.js";
-import { REDIS_KEYS } from "../types.js";
+import { REDIS_KEYS, COMMENT_TTL_S } from "../types.js";
 
 // ---------------------------------------------------------------------------
 // Mock RedisClient factory
@@ -20,7 +20,9 @@ function createMockRedis(): RedisClient {
 
   return {
     get: vi.fn(async (key: string) => store.get(key) ?? undefined),
-    set: vi.fn(async (key: string, value: string) => {
+    // Mirrors Devvit: SET NX returns "" when the key already exists
+    set: vi.fn(async (key: string, value: string, options?: { nx?: boolean }) => {
+      if (options?.nx && store.has(key)) return "";
       store.set(key, value);
       return "OK";
     }),
@@ -45,6 +47,12 @@ function createMockRedis(): RedisClient {
         return members.length;
       }
     ),
+    zRemRangeByScore: vi.fn(async (key: string, min: number, max: number) => {
+      const set = sortedSets.get(key) ?? [];
+      const kept = set.filter((m) => m.score < min || m.score > max);
+      sortedSets.set(key, kept);
+      return set.length - kept.length;
+    }),
     zRange: vi.fn(
       async (
         key: string,
@@ -90,6 +98,14 @@ function makeComment(
     status: "pending",
     ...overrides,
   };
+}
+
+/**
+ * An ingestion timestamp `offsetS` seconds into the last minute — inside the
+ * retention window, so `saveComment`'s index trim keeps it.
+ */
+function recent(offsetS: number): string {
+  return new Date(Date.now() - 60_000 + offsetS * 1000).toISOString();
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +172,54 @@ describe("commentStorage", () => {
 
       expect(redis.incrBy).toHaveBeenCalledTimes(1);
     });
+
+    // ── COR-5: atomic duplicate detection ───────────────────────────
+
+    it("writes with SET NX so concurrent deliveries can't both win", async () => {
+      const comment = makeComment();
+      const [a, b] = await Promise.all([
+        saveComment(comment, redis),
+        saveComment(comment, redis),
+      ]);
+
+      expect([a, b].sort()).toEqual(["duplicate", "saved"]);
+      expect(redis.set).toHaveBeenCalledWith(
+        REDIS_KEYS.comment("t1_abc123"),
+        expect.any(String),
+        expect.objectContaining({ nx: true })
+      );
+      expect(redis.incrBy).toHaveBeenCalledTimes(1);
+    });
+
+    // ── COR-4: retention ───────────────────────────────────────────
+
+    it("expires the record COMMENT_TTL_S after ingestion", async () => {
+      const comment = makeComment();
+      await saveComment(comment, redis);
+
+      const expected = new Date(comment.ingestedAt).getTime() + COMMENT_TTL_S * 1000;
+      const options = vi.mocked(redis.set).mock.calls[0][2] as { expiration: Date };
+      expect(options.expiration.getTime()).toBe(expected);
+    });
+
+    it("trims index entries older than the retention window", async () => {
+      await saveComment(makeComment(), redis);
+
+      const indexKey = REDIS_KEYS.commentIndex("testsub");
+      const [key, min, max] = vi.mocked(redis.zRemRangeByScore).mock.calls[0];
+      expect(key).toBe(indexKey);
+      expect(min).toBe(0);
+      expect(Date.now() - COMMENT_TTL_S * 1000 - max).toBeLessThan(1000);
+    });
+
+    it("still saves when index trimming fails", async () => {
+      vi.mocked(redis.zRemRangeByScore).mockRejectedValueOnce(new Error("Redis busy"));
+
+      const result = await saveComment(makeComment(), redis);
+
+      expect(result).toBe("saved");
+      expect(redis.incrBy).toHaveBeenCalledTimes(1);
+    });
   });
 
   // ── getComment ────────────────────────────────────────────────────
@@ -183,6 +247,17 @@ describe("commentStorage", () => {
 
       const stored = await getComment("t1_abc123", redis);
       expect(stored!.status).toBe("processing");
+    });
+
+    it("keeps the original expiry when updating (SET would clear the TTL)", async () => {
+      const comment = makeComment();
+      await saveComment(comment, redis);
+
+      await updateCommentStatus("t1_abc123", { status: "analyzed" }, redis);
+
+      const expected = new Date(comment.ingestedAt).getTime() + COMMENT_TTL_S * 1000;
+      const options = vi.mocked(redis.set).mock.calls[1][2] as { expiration: Date };
+      expect(options.expiration.getTime()).toBe(expected);
     });
 
     it("updates status with error message", async () => {
@@ -215,15 +290,15 @@ describe("commentStorage", () => {
     it("returns comment IDs ordered by ingestion time (newest first)", async () => {
       const c1 = makeComment({
         commentId: "t1_first",
-        ingestedAt: "2026-03-10T00:00:01.000Z",
+        ingestedAt: recent(1),
       });
       const c2 = makeComment({
         commentId: "t1_second",
-        ingestedAt: "2026-03-10T00:00:02.000Z",
+        ingestedAt: recent(2),
       });
       const c3 = makeComment({
         commentId: "t1_third",
-        ingestedAt: "2026-03-10T00:00:03.000Z",
+        ingestedAt: recent(3),
       });
 
       await saveComment(c1, redis);
@@ -243,7 +318,7 @@ describe("commentStorage", () => {
         await saveComment(
           makeComment({
             commentId: `t1_c${i}`,
-            ingestedAt: `2026-03-10T00:00:0${i}.000Z`,
+            ingestedAt: recent(i),
           }),
           redis
         );

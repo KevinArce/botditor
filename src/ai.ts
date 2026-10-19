@@ -1,7 +1,11 @@
 /**
  * AI Analysis Pipeline – Story 02
  *
- * Calls the Gemini API to score comments for toxicity, spam, and bot-likelihood.
+ * Calls the Gemini API to score comments for toxicity, spam, bot-likelihood
+ * and sentiment. Gemini is the only provider the published app calls:
+ * Devvit's fetch policy permits only OpenAI and Google Gemini as AI
+ * providers. TypeSafe Jev is compared against it offline with
+ * `npm run bench` (see `bench/`), which reuses `requestGeminiAnalysis()`.
  *
  * Design decisions:
  *   • Every code path returns a valid AnalysisResult — never throws.
@@ -17,13 +21,7 @@
  *   • Comment bodies and raw model output are never logged.
  */
 import type { TriggerContext } from "@devvit/public-api";
-import type {
-  IngestedComment,
-  AnalysisResult,
-  Sentiment,
-  AIProvider,
-  DualRunBenchmarkRecord,
-} from "./types.js";
+import type { IngestedComment, AnalysisResult, Sentiment } from "./types.js";
 import {
   ANALYSIS_FALLBACK,
   REDIS_KEYS,
@@ -33,137 +31,19 @@ import {
   DEFAULT_GEMINI_MODEL,
   GEMINI_API_HOST,
   GEMINI_TIMEOUT_MS,
-  DEFAULT_AI_PROVIDER,
 } from "./types.js";
-import { analyzeCommentWithJev } from "./jev.js";
 
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
 /**
- * Analyze a comment via the configured AI provider (Gemini, Jev, or Dual-Run).
+ * Analyze a comment via the Gemini API.
  *
  * Always returns a valid `AnalysisResult`. On any error the safe fallback is
  * returned and the issue is logged — no exception escapes.
  */
 export async function analyzeComment(
-  record: IngestedComment,
-  context: TriggerContext
-): Promise<AnalysisResult> {
-  try {
-    const provider =
-      (await context.settings.get<AIProvider>(SETTINGS.AI_PROVIDER)) ||
-      DEFAULT_AI_PROVIDER;
-
-    if (provider === "jev") {
-      const jevResult = await analyzeCommentWithJev(record, context);
-      // Fallback to Gemini if Jev fails or is unconfigured
-      if (
-        jevResult.reason.includes("error") ||
-        jevResult.reason.includes("unavailable") ||
-        jevResult.reason.includes("no jev api key")
-      ) {
-        console.warn(
-          `[ai] Jev analysis failed (${jevResult.reason}) — falling back to Gemini`
-        );
-        return await analyzeCommentWithGemini(record, context);
-      }
-      return jevResult;
-    }
-
-    if (provider === "dual_run") {
-      return await analyzeDualRun(record, context);
-    }
-
-    return await analyzeCommentWithGemini(record, context);
-  } catch (err) {
-    console.error(
-      `[ai] Unexpected error in analyzeComment router for ${record.commentId}:`,
-      err instanceof Error ? err.message : err
-    );
-    return { ...ANALYSIS_FALLBACK, reason: "unexpected error" };
-  }
-}
-
-/**
- * Run both Jev and Gemini in parallel, storing comparison metrics in Redis.
- */
-async function analyzeDualRun(
-  record: IngestedComment,
-  context: TriggerContext
-): Promise<AnalysisResult> {
-  const { redis } = context;
-  const t0 = Date.now();
-
-  const [jevOutcome, geminiOutcome] = await Promise.allSettled([
-    analyzeCommentWithJev(record, context),
-    analyzeCommentWithGemini(record, context),
-  ]);
-
-  const jevResult =
-    jevOutcome.status === "fulfilled"
-      ? jevOutcome.value
-      : { ...ANALYSIS_FALLBACK, reason: "jev failed" };
-  const geminiResult =
-    geminiOutcome.status === "fulfilled"
-      ? geminiOutcome.value
-      : { ...ANALYSIS_FALLBACK, reason: "gemini failed" };
-
-  const durationMs = Date.now() - t0;
-  console.log(
-    `[dual_run] Benchmark for ${record.commentId}: ` +
-    `Jev(tox=${jevResult.toxicityScore}, spam=${jevResult.spamScore}) vs ` +
-    `Gemini(tox=${geminiResult.toxicityScore}, spam=${geminiResult.spamScore}) in ${durationMs}ms`
-  );
-
-  try {
-    const benchRecord: DualRunBenchmarkRecord = {
-      commentId: record.commentId,
-      timestamp: new Date().toISOString(),
-      jev: {
-        latencyMs: 0,
-        toxicityScore: jevResult.toxicityScore,
-        spamScore: jevResult.spamScore,
-        botLikelihood: jevResult.botLikelihood,
-        sentiment: jevResult.sentiment,
-        reason: jevResult.reason,
-      },
-      gemini: {
-        latencyMs: durationMs,
-        toxicityScore: geminiResult.toxicityScore,
-        spamScore: geminiResult.spamScore,
-        botLikelihood: geminiResult.botLikelihood,
-        sentiment: geminiResult.sentiment,
-        reason: geminiResult.reason,
-      },
-      toxicityDelta: Number(
-        Math.abs(jevResult.toxicityScore - geminiResult.toxicityScore).toFixed(4)
-      ),
-      latencyDiffMs: 0,
-    };
-    const key = REDIS_KEYS.jevComparison(record.commentId);
-    await redis.set(key, JSON.stringify(benchRecord));
-    await redis.expire(key, Math.floor(ANALYSIS_CACHE_TTL_MS / 1000));
-  } catch (err) {
-    console.warn(`[dual_run] Failed to cache comparison:`, err);
-  }
-
-  // Use Jev result if valid, otherwise fallback to Gemini
-  if (
-    jevResult.reason.includes("error") ||
-    jevResult.reason.includes("unavailable") ||
-    jevResult.reason.includes("no jev api key")
-  ) {
-    return geminiResult;
-  }
-  return jevResult;
-}
-
-/**
- * Analyze a comment via the Gemini API.
- */
-export async function analyzeCommentWithGemini(
   record: IngestedComment,
   context: TriggerContext
 ): Promise<AnalysisResult> {
@@ -227,11 +107,74 @@ async function analyzeCommentInner(
     (await settings.get<string>(SETTINGS.GEMINI_MODEL))?.trim() ||
     DEFAULT_GEMINI_MODEL;
 
-  // ── 4. Build request & call API ─────────────────────────────────
+  // ── 4. Call the API ─────────────────────────────────────────────
+  const result = await requestGeminiAnalysis(
+    record.body,
+    { apiKey, model },
+    `comment ${record.commentId}`
+  );
+
+  // ── 5. Cache result ─────────────────────────────────────────────
+  // Failures are not cached, so a re-delivered event can retry.
+  if (!isGeminiFailure(result)) {
+    try {
+      await redis.set(cacheKey, JSON.stringify(result));
+      // Set expiration — Devvit Redis supports `expire` for TTL
+      await redis.expire(cacheKey, Math.floor(ANALYSIS_CACHE_TTL_MS / 1000));
+    } catch (err) {
+      // Non-fatal: we got the result, caching just failed
+      console.warn(
+        `[ai] Failed to cache result for comment ${record.commentId}:`,
+        err instanceof Error ? err.message : err
+      );
+    }
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Gemini HTTP call (context-free — shared with the offline benchmark)
+// ---------------------------------------------------------------------------
+
+/** Credentials and model for one Gemini call. */
+export interface GeminiConfig {
+  apiKey: string;
+  model: string;
+}
+
+/** `reason` values for Gemini calls that produced no analysis. */
+const GEMINI_FAILURE_REASONS = new Set([
+  "timeout",
+  "fetch error",
+  "response read error",
+  "empty response",
+  "parse error",
+]);
+
+/** True when `result` is a fallback from a failed Gemini call. */
+export function isGeminiFailure(result: AnalysisResult): boolean {
+  return (
+    GEMINI_FAILURE_REASONS.has(result.reason) ||
+    result.reason.startsWith("api error")
+  );
+}
+
+/**
+ * POST one comment body to Gemini and parse the result. Needs only `fetch`,
+ * so it runs inside Devvit and in Node alike. Never throws; failures return
+ * the zero-score fallback with a descriptive `reason`. `label` identifies the
+ * item in logs — never the comment text.
+ */
+export async function requestGeminiAnalysis(
+  body: string,
+  { apiKey, model }: GeminiConfig,
+  label: string
+): Promise<AnalysisResult> {
   // The key travels in a header rather than the query string so it cannot
   // leak through logged or echoed URLs.
   const url = `https://${GEMINI_API_HOST}/v1beta/models/${encodeURIComponent(model)}:generateContent`;
-  const requestBody = buildRequestBody(record.body, model);
+  const requestBody = buildRequestBody(body, model);
 
   let response: Response;
   try {
@@ -250,12 +193,12 @@ async function analyzeCommentInner(
   } catch (err) {
     if (err instanceof TimeoutError) {
       console.error(
-        `[ai] Gemini call timed out after ${GEMINI_TIMEOUT_MS} ms for comment ${record.commentId} (model=${model})`
+        `[ai] Gemini call timed out after ${GEMINI_TIMEOUT_MS} ms for ${label} (model=${model})`
       );
       return { ...ANALYSIS_FALLBACK, reason: "timeout" };
     }
     console.error(
-      `[ai] Fetch failed for comment ${record.commentId}:`,
+      `[ai] Fetch failed for ${label}:`,
       err instanceof Error ? err.message : err
     );
     return { ...ANALYSIS_FALLBACK, reason: "fetch error" };
@@ -265,19 +208,18 @@ async function analyzeCommentInner(
     let errorBody = "";
     try { errorBody = await response.text(); } catch { /* ignore */ }
     console.error(
-      `[ai] Gemini API returned ${response.status} for comment ${record.commentId} (model=${model})`,
+      `[ai] Gemini API returned ${response.status} for ${label} (model=${model})`,
       errorBody ? `— body: ${errorBody.slice(0, 500)}` : ""
     );
     return { ...ANALYSIS_FALLBACK, reason: `api error ${response.status}` };
   }
 
-  // ── 5. Parse response ───────────────────────────────────────────
   let responseBody: string;
   try {
     responseBody = await response.text();
   } catch (err) {
     console.error(
-      `[ai] Failed to read response body for comment ${record.commentId}:`,
+      `[ai] Failed to read response body for ${label}:`,
       err instanceof Error ? err.message : err
     );
     return { ...ANALYSIS_FALLBACK, reason: "response read error" };
@@ -286,32 +228,15 @@ async function analyzeCommentInner(
   const rawText = extractGeneratedText(responseBody);
   if (!rawText) {
     console.error(
-      `[ai] No text content in Gemini response for comment ${record.commentId} ` +
+      `[ai] No text content in Gemini response for ${label} ` +
       `(${describeEmptyResponse(responseBody)})`
     );
     return { ...ANALYSIS_FALLBACK, reason: "empty response" };
   }
 
   const result = parseAnalysisResponse(rawText);
-
-  // ── 6. Cache result ─────────────────────────────────────────────
-  // Parse failures are not cached, so a re-delivered event can retry.
-  if (result.reason !== "parse error") {
-    try {
-      await redis.set(cacheKey, JSON.stringify(result));
-      // Set expiration — Devvit Redis supports `expire` for TTL
-      await redis.expire(cacheKey, Math.floor(ANALYSIS_CACHE_TTL_MS / 1000));
-    } catch (err) {
-      // Non-fatal: we got the result, caching just failed
-      console.warn(
-        `[ai] Failed to cache result for comment ${record.commentId}:`,
-        err instanceof Error ? err.message : err
-      );
-    }
-  }
-
   console.log(
-    `[ai] Analysis complete for comment ${record.commentId}: ` +
+    `[ai] Analysis complete for ${label}: ` +
     `toxicity=${result.toxicityScore}, spam=${result.spamScore}, ` +
     `bot=${result.botLikelihood}, sentiment=${result.sentiment}, ` +
     `reason="${result.reason}"`

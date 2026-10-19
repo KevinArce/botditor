@@ -16,11 +16,14 @@
  * The composite score is clamped to 0–1. Each fired heuristic appends a
  * human-readable reason string to the result.
  *
+ * `mergeSpamSignals()` then blends in the AI spam score: a rule score ≥ 0.5
+ * is final, otherwise the higher of the two scores is enforced (COR-3).
+ *
  * Fail-safe: any heuristic that depends on external data (Redis, Reddit API)
  * is wrapped in a try/catch so a failure simply skips that check.
  */
 import type { TriggerContext } from "@devvit/public-api";
-import type { SpamResult } from "./types.js";
+import type { AnalysisResult, SpamResult } from "./types.js";
 import { SETTINGS, REDIS_KEYS } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -153,6 +156,36 @@ async function computeSpamScoreInner(
   }
 
   return { score: clampedScore, reasons, blockedDomain };
+}
+
+// ---------------------------------------------------------------------------
+// Rule + AI blend (Story 04 / COR-3)
+// ---------------------------------------------------------------------------
+
+/** A rule-based score at or above this is final; below it the AI weighs in. */
+export const RULE_SPAM_CONFIDENT = 0.5;
+
+/**
+ * Combine the rule-based result with the AI spam score into the result
+ * that enforcement acts on.
+ *
+ *   • Blocked domain, or rule score ≥ 0.5 → the rule result, unchanged.
+ *   • Otherwise → the higher of the rule score and the AI score. When the
+ *     AI score wins, its reason is appended so reports explain the action.
+ *
+ * AI failures return zero scores, so they never raise the result.
+ */
+export function mergeSpamSignals(
+  rule: SpamResult,
+  analysis: AnalysisResult
+): SpamResult {
+  if (rule.blockedDomain || rule.score >= RULE_SPAM_CONFIDENT) return rule;
+  if (analysis.spamScore <= rule.score) return rule;
+  return {
+    score: analysis.spamScore,
+    reasons: [...rule.reasons, `AI spam score ${analysis.spamScore}: ${analysis.reason}`],
+    blockedDomain: false,
+  };
 }
 
 // ---------------------------------------------------------------------------
