@@ -1,6 +1,6 @@
 # Story 11: Thread Summarization
 
-Status: ✅ Keep & Enrich
+Status: ⬜ Not started — deferred to P3 (2026-10-18). Large threads exceed comfortable prompt sizes and Devvit's per-invocation time budget. Revisit after the Devvit Web migration (PLAT-1) with a chunked map-reduce design.
 
 Feature area: AI Analysis
 

@@ -1,6 +1,6 @@
-# Story 17: Humorous Warning Templates
+# Story 17: Humorous Warning Templates (Dropped)
 
-Status: ⚠️ Scope Down — image-based meme responses are not feasible in Devvit (no image upload API for bot-posted content); scoped to text-only humorous templates used in warning messages.
+Status: 🚫 Dropped (2026-10-18) — not planned. Joke-toned automated warnings about AI-flagged content risk provoking hostility toward moderators and undercut their credibility, and they add policy risk with no moderation benefit. Moderators who want a lighter tone can edit the existing chill template (Story 09). The scoped text below is kept for context.
 
 Feature area: Nice-to-Have
 

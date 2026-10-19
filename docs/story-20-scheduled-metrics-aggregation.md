@@ -1,6 +1,6 @@
 # Story 20: Scheduled Metrics Aggregation (Gap Story)
 
-Status: ✅ New — identified via gap analysis; Devvit's scheduler API enables periodic background jobs, but no story currently uses it for analytics aggregation.
+Status: ⬜ Not started — blocked on ANL-0. Added via gap analysis: the Devvit scheduler can roll up the ANL-0 daily counters instead of reading unbounded keys.
 
 Feature area: Analytics
 

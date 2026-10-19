@@ -1,6 +1,6 @@
 # Story 18: Discord Webhook Notifications
 
-Status: ⚠️ Scope Down — full Discord integration as a primary notification channel is out of scope for a Reddit-native Devvit app; scoped to opt-in Discord webhook notifications for high-severity auto-removals only, with a copyable-summary fallback for subreddits that do not use Discord.
+Status: ⬜ Not started — re-evaluate, strictly optional (P3). Needs a declared `discord.com` fetch domain, a webhook URL stored as a secret, and a privacy-policy disclosure because Reddit content would leave the platform. Scoped to opt-in webhook notifications for high-severity auto-removals.
 
 Feature area: Nice-to-Have
 

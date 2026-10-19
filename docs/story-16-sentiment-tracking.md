@@ -1,6 +1,6 @@
 # Story 16: Sentiment Tracking
 
-Status: ✅ Keep — moved to Nice-to-Have; provides community health insight but depends on sufficient analytics infrastructure from Stories 13/14.
+Status: ⬜ Not started (P3) — sentiment is already extracted by the AI pipeline and stored on every comment record. Aggregation needs the ANL-0 date-keyed counters.
 
 Feature area: Nice-to-Have
 

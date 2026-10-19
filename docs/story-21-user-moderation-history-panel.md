@@ -1,6 +1,6 @@
 # Story 21: User Moderation History Panel (Gap Story)
 
-Status: ✅ New — identified via gap analysis; Devvit supports custom UI panels and `kvStore` user-level data, enabling per-user moderation history without navigating away from the thread.
+Status: ⬜ Not started — blocked on ANL-0 per-user counters. Added via gap analysis; feasible as a read-only moderator form.
 
 Feature area: Core Moderation
 

@@ -1,6 +1,6 @@
 # Story 19: Post-Level Analysis (Gap Story)
 
-Status: ✅ New — identified via gap analysis; Devvit's `PostSubmit` trigger is a first-class event with no existing story coverage.
+Status: ⬜ Not started — planned for v2.0. Devvit's `PostSubmit` trigger mirrors `CommentSubmit`; best built on Devvit Web (PLAT-1).
 
 Feature area: Core Moderation
 
@@ -24,7 +24,7 @@ Devvit's `PostSubmit` trigger works identically to `CommentSubmit`. The same AI 
 Devvit hooks:
 - `Devvit.addTrigger({ event: 'PostSubmit', onEvent: handler })`
 - `context.reddit.getPostById(postId)` then `post.remove()`
-- `context.modLog.add({ action: 'removelink', target: postId, details: 'botditor', description: reason })`
+- `post.addRemovalNote({ reasonId: '', modNote: reason })` (`context.modLog` was removed from Devvit)
 
 Gemini prompt strategy:
 Reuse the Story 02 pipeline with a modified prompt preamble:

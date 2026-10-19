@@ -1,6 +1,6 @@
 # Story 02: AI Analysis Pipeline
 
-Status: ✅ Implemented
+Status: ✅ Implemented — Google Gemini is the app's only provider. PR #18 (v1.2.0) added in-app TypeSafe Jev / `dual_run` modes; they were removed on 2026-10-18 because Devvit permits only OpenAI and Gemini as AI providers (BACKLOG POL-3). Jev is now compared offline with `npm run bench`.
 
 Feature area: Core Moderation
 
@@ -17,6 +17,11 @@ Implementation notes (updated 2026-09-10, BACKLOG OPS-1):
 - All errors return safe fallback scores (all zeros) — no moderation action on failure.
 - No logging of comment bodies, raw responses, or the key. Empty responses log `blockReason`/`finishReason`.
 - `maxOutputTokens` set to 2048 to leave room for thinking tokens.
+
+Provider policy and offline benchmark (2026-10-18, BACKLOG POL-3):
+- Devvit's fetch policy permits only OpenAI and Google Gemini as AI providers, and it reviews fetch domains for playtests too. So the app declares only `generativelanguage.googleapis.com`, and `main.test.ts` guards that.
+- The Gemini HTTP call is `requestGeminiAnalysis(body, { apiKey, model }, label)` in `src/ai.ts`. It's context-free, and `analyzeComment()` wraps it with the emoji shortcut, settings, and the 1 h Redis cache.
+- `npm run bench` (`bench/`) runs on a developer machine. It scores a JSONL corpus with that same Gemini call and with TypeSafe Jev (`src/jev.ts`: `POST /v1/systemone`, `noul` questions for toxic/spam/bot, a `choice` for sentiment). It then reports per-provider latency, mean score deltas, agreement on the app's decisions, and precision/recall on labelled items. Keys come from `GEMINI_API_KEY` / `JEV_API_KEY` in `.env`.
 
 Story:
 As a moderator, I want comments analyzed by the Gemini API so that moderation signals are more accurate than simple keyword rules.

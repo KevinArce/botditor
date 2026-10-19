@@ -1,6 +1,6 @@
 # Story 14: Subreddit Stats Command
 
-Status: ✅ Keep & Enrich
+Status: ⬜ Not started — blocked on ANL-0 (date-keyed moderation counters; see BACKLOG). `comments:count:<sub>` and `bans:count:<sub>` already exist.
 
 Feature area: Analytics
 

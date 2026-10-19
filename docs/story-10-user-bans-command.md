@@ -1,9 +1,10 @@
 # Story 10: User Bans via Command
 
-Status: 🟡 Partial — the menu-based ban action with pre-filled confirmation form, permission check, error handling and analytics record all work. Gaps (tracked as [BACKLOG OPS-3](./BACKLOG.md)):
-- The mod-log entry never succeeds (`context.modLog` was removed from Devvit). Bans run as the app account, so nothing records *which moderator* issued the ban. Put that in `banUser({ note })`, which is visible to moderators in the mod log.
-- The form's help text says the reason is "Shown to the banned user". In the Reddit API, `reason` appears in the Banned Users list; the user-facing text is `message`.
-- `duration` must be 0 (permanent) or 1–999; the form doesn't cap it. `context: commentId` isn't passed, so the ban doesn't cite the comment.
+Status: ✅ Implemented — menu-based ban with a pre-filled confirmation form, permission check, error handling and analytics record. Fixed 2026-10-18 (BACKLOG OPS-3):
+- The acting moderator is recorded in `banUser({ note: "Banned by u/<mod> via botditor[: note]" })`, shown to moderators in the mod log. This replaced the dead `context.modLog.add()`.
+- Field mapping: form "Ban reason" → `reason` (mod-facing, Banned Users list, ≤ 100 chars). New optional "Message to the banned user" → `message`. The offending comment goes in `context`.
+- `duration` is validated to 0 (permanent) or 1–999 days before calling the API.
+- 🔍 Confirm the note and context in a playtest.
 
 Feature area: Core Moderation
 
@@ -26,7 +27,7 @@ Devvit hooks:
 - `Devvit.addMenuItem({ label: 'Ban User', location: 'comment', forUserType: 'moderator', onPress })`
 - `Devvit.createForm(...)` — pre-filled with author and reason
 - `context.reddit.banUser({ subredditName, username, reason, duration })` (or equivalent API)
-- `context.modLog.add({ action: 'banuser', ... })`
+- ~~`context.modLog.add({ action: 'banuser', ... })`~~ → acting moderator recorded in `banUser({ note })` (`context.modLog` was removed from Devvit)
 
 Edge cases:
 - User already banned: catch the API error (`ALREADY_BANNED`) and show a toast indicating the user is already banned.
@@ -41,7 +42,7 @@ Conflicts: README.md previously documented `!botditor ban @user` — updated to 
 Dependencies: Story 06 (moderation settings), existing `nuke.ts` permission check pattern.
 
 Implementation notes:
-- Module: `src/bans.ts` — `handleBanUser()` with permission check → `banUser()` → mod log → Redis analytics.
+- Module: `src/bans.ts` — `handleBanUser()` with duration validation → permission check → `banUser()` (audit note + context) → Redis analytics.
 - Form: registered in `src/main.ts` via `Devvit.createForm()` with dynamic data pre-fill.
 - Analytics: ban records persisted under `ban:<user>:<epoch>` key; per-subreddit counter at `bans:count:<sub>`.
-- Tests: `src/__tests__/bans.test.ts` — 13 unit tests covering happy path, permissions, error handling.
+- Tests: `src/__tests__/bans.test.ts` — unit tests covering the happy path, field mapping and truncation, duration limits, permissions, and error handling.

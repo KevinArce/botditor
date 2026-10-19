@@ -1,6 +1,6 @@
 # Story 06: Auto-Moderation Rules
 
-Status: ✅ Implemented
+Status: ✅ Implemented — since 2026-10-18 thresholds are range-validated (0 < x ≤ 1) on the settings form (`onValidate`) and at runtime (≤ 0 or non-numeric falls back to the default). `spamMode` / `moderationProfile` are normalised and validated. All settings come from one `getAll()` RPC per comment (BACKLOG COR-2, PERF-1). `select` fields are deferred to the Devvit Web migration (PLAT-1), because changing a saved setting's type is unsafe.
 
 Feature area: Core Moderation
 

@@ -1,8 +1,8 @@
 # Story 05: Bot Detection
 
-Status: ⬜ Not started (scoped down) — full account-history bot detection is not practical within Devvit's per-event execution model; scoped to behavioral signals from recent comment activity only.
+Status: 🟡 Partial — AI-signal enforcement done (2026-10-18); behavioural heuristics not started. Full account-history bot detection isn't practical within Devvit's per-event model, so the story is scoped to recent same-subreddit signals.
 
-Current state (2026-09-10): Gemini's `botLikelihood` is stored on each comment record and the `botFlagThreshold` setting (default 0.75) is registered and loaded by `rules.ts`, but nothing enforces it — moderators can edit a setting that has no effect. The behavioural heuristics below aren't implemented.
+Current state (2026-10-18): `enforceBot()` in `src/moderation.ts` reports a comment when the AI `botLikelihood` (Gemini or Jev) is ≥ `botFlagThreshold` (default 0.75, validated to (0, 1]). The report reason is `[botditor] bot-likelihood=<score> — <reason>`. It never removes or bans and never sends a warning PM. It shares the `flagged:<id>` dedup key with toxicity and spam, so a comment gets at most one report, and it's skipped if the comment was already removed. Dry-run returns `dry_run_bot_flag`. **Not yet implemented:** the three behavioural heuristics below, and listing the top signals in the report. Upgrading installs start receiving bot reports at the existing 0.75 default (BACKLOG POL-4).
 
 Feature area: Core Moderation
 

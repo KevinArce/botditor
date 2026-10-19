@@ -1,6 +1,6 @@
 # Story 13: Toxicity Reports
 
-Status: ⚠️ Scope Down — periodic scheduled toxicity reports require a reliable scheduler and persistent aggregation; scoped to an on-demand toxicity snapshot to reduce implementation risk while delivering immediate value.
+Status: ⬜ Not started — blocked on ANL-0 (date-keyed moderation counters; see BACKLOG). Scoped to an on-demand snapshot; the scheduled digest moved to Story 20.
 
 Feature area: Analytics
 

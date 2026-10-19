@@ -1,6 +1,6 @@
 # Story 12: Summarize Command
 
-Status: ⚠️ Scope Down — text-based comment commands (`!botditor summarize`) are unreliable in Devvit because the `CommentSubmit` trigger cannot distinguish bot commands from regular user comments without fragile text parsing; scoped to a moderator menu action on posts.
+Status: ⬜ Not started — deferred to P3 with Story 11. Scoped to a moderator menu action on posts: text commands (`!botditor summarize`) can't be told apart from ordinary comments without fragile parsing.
 
 Feature area: AI Analysis
 

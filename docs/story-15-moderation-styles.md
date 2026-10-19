@@ -1,8 +1,10 @@
 # Story 15: Moderation Style Profiles
 
-Status: 🟡 Partial (scoped down) — AI-generated response tone per profile is deferred; scoped to threshold presets only, with an optional tone label used in warning templates (Story 09).
+Status: 🟡 Partial — re-scoped (2026-10-18) to **warning tone only**. The setting's help text and the README now say so. Threshold presets are on hold, for the reason below.
 
-Current state (2026-09-10): `moderationProfile` exists as a free-text setting (not a `select`) and only chooses between the strict and chill warning templates (Story 09). The threshold presets in the acceptance criteria below aren't implemented, and the profile isn't included in mod-log entries.
+Current state (2026-10-18): `moderationProfile` (`chill` | `strict`, validated) chooses between the chill and strict warning templates (Story 09). It doesn't change any threshold.
+
+Why presets aren't implemented: the acceptance criterion "profile thresholds are overridden by any individual threshold setting explicitly set by the moderator" can't be met today. Every threshold setting registers a `defaultValue`, and Devvit returns that default when the moderator hasn't set the field. So code can't tell "the moderator chose 0.85" from "untouched", and a preset would either override explicit choices or never apply. A workable design: remove the `defaultValue` from the threshold settings (help text: "leave blank to use the profile preset") and resolve `explicit ?? preset[profile]` in `rules.ts`. Before shipping it, verify in a playtest that installs that already saved values keep them, and that unset fields come back `undefined`. The cleanest moment is the Devvit Web migration (PLAT-1), where settings are re-declared in `devvit.json`.
 
 Feature area: Core Moderation
 
@@ -29,6 +31,6 @@ Devvit hooks:
 Edge cases:
 - Individual threshold overrides conflict with profile defaults: individual settings win; profile is advisory.
 
-Deferred: "Comedy mode" (meme-based responses) is not implemented as a profile option — see Story 17 for the scoped humor template approach.
+Deferred: "Comedy mode" isn't a profile option. Story 17 (humorous templates) was dropped on 2026-10-18.
 
 Dependencies: Story 06 (threshold settings), Story 09 (warning template selection).

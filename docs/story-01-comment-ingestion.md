@@ -1,6 +1,6 @@
 # Story 01: Comment Ingestion
 
-Status: ✅ Implemented
+Status: ✅ Implemented — hardened 2026-10-18: atomic `SET NX` duplicate detection (COR-5), 30-day record retention and index trimming (COR-4), username read from `event.author.name` with `comment.author` as fallback (COR-1), one settings RPC per comment (PERF-1). Needs one playtest to confirm the author field and NX behaviour (🔍).
 
 Feature area: Core Moderation
 

@@ -1,6 +1,6 @@
 # Story 07: Auto-Remove Rule-Breaking Comments
 
-Status: 🟡 Partial — removal, Redis dedup, and dry-run work. The mod-log entry never succeeds: `context.modLog` was removed from Devvit between 0.12.0 and 0.12.14 (types and runtime), so the call throws a `TypeError` that is caught and logged. Reddit's native mod log still records the removal under the app account, without Botditor's reason. Fix: [BACKLOG OPS-3](./BACKLOG.md) (`reddit.addRemovalNote()`).
+Status: ✅ Implemented — removal, Redis dedup (`removed:<id>`, 7-day TTL), dry-run, and a mod-facing removal note on every auto-removal via `comment.addRemovalNote({ reasonId: "", modNote })`, which replaced the dead `context.modLog.add()` (BACKLOG OPS-3, 2026-10-18). 🔍 Confirm the note in a playtest.
 
 Feature area: Core Moderation
 
@@ -17,18 +17,19 @@ Acceptance criteria:
 Feasibility rating: High
 
 Justification:
-`comment.remove()` and `context.modLog.add()` are already implemented in `src/nuke.ts`. This story extends that logic to trigger automatically from AI scores rather than manual moderator menu action.
+`comment.remove()` is already used in `src/nuke.ts`. This story extends that logic to trigger automatically from AI scores rather than manual moderator menu action.
 
 Implementation notes:
 - All Story 07 logic lives in `src/moderation.ts`, inside the `removeComment()` helper.
-- The dedup check, mod log write, and dedup key set each have their own try/catch — failures in one never block the others.
+- The dedup check, removal note, and dedup key set each have their own try/catch — failures in one never block the others.
 - ~~`modLog` is omitted from Devvit's `TriggerContext` type but is available at runtime; accessed via a targeted cast (same pattern as `nuke.ts`).~~ **Incorrect (verified 2026-09-10):** `modLog` isn't available at runtime in `@devvit/public-api` 0.12.14+. The unit tests pass only because they mock `context.modLog`.
-- 7 unit tests cover mod log entries, dedup behavior, dry-run exclusions, and Redis failure resilience.
-- Reddit's API enforces a **100-character limit** on the `reason` (report) and `description` (mod log) fields. A `truncateReason()` helper in `moderation.ts` clips any string that exceeds this limit, appending an `…` ellipsis. This is applied at both API boundaries (`reddit.report()` and `modLog.add()`), not at the AI layer, so internal logs still contain the full reason text.
+- Since 2026-10-18 the reason is attached with `comment.addRemovalNote({ reasonId: "", modNote: "[botditor] <reason>" })`. `reasonId: ""` attaches no subreddit removal reason, so nothing is sent to the user. Tests mock `addRemovalNote` on the comment object, the real API, instead of `modLog`.
+- Unit tests cover removal notes (including truncation), dedup behaviour and its 7-day TTL, dry-run exclusions, and Redis failure resilience.
+- Reddit's API enforces a **100-character limit** on the `reason` (report) and `description` (mod log) fields. A `truncateReason()` helper in `moderation.ts` clips any string that exceeds this limit, appending an `…` ellipsis. This is applied at both API boundaries (`reddit.report()` and `addRemovalNote()`), not at the AI layer, so internal logs still contain the full reason text.
 
 Devvit hooks:
 - `comment.remove()` — reused from `src/nuke.ts`
-- `context.modLog.add({ action: 'removecomment', target: commentId, details: 'botditor', description: truncateReason(reason) })`
+- `comment.addRemovalNote({ reasonId: '', modNote: truncateReason('[botditor] ' + reason) })` (replaces the removed `context.modLog.add()`)
 - `context.reddit.report(comment, { reason: truncateReason('Botditor: ' + reason) })` — flag action
 - `context.redis.set(`removed:${commentId}`, '1')` — deduplication
 - `context.redis.get(`removed:${commentId}`)` — dedup check before removal

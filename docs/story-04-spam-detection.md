@@ -1,6 +1,6 @@
 # Story 04: Spam Detection
 
-Status: 🟡 Partial — rule-based heuristics, blocked domains, flag/remove modes and dry-run are implemented (`src/spam.ts`, `enforceSpam()` in `src/moderation.ts`). Gap: "if the rule-based score is below 0.5, the AI pipeline score is used" isn't enforced. The AI score is merged into the stored analysis, but `enforceSpam()` only sees the rule-based score ([BACKLOG COR-3](./BACKLOG.md)). Removals aren't logged to the mod log (OPS-3).
+Status: ✅ Implemented — rule-based heuristics, blocked domains, flag/remove modes and dry-run (`src/spam.ts`, `enforceSpam()`). Since 2026-10-18 `mergeSpamSignals()` meets the "AI score is used when the rule score is below 0.5" criterion: a rule score ≥ 0.5 is final, otherwise `max(rule, AI)` is stored and enforced (BACKLOG COR-3). Removals carry a removal note (OPS-3).
 
 Feature area: Core Moderation
 
@@ -27,7 +27,7 @@ Rule-based heuristics are pure logic. The AI score comes for free from Story 02.
 Devvit hooks:
 - `context.reddit.getUserByUsername(author)` for account age/karma
 - `context.kvStore.get` / `context.kvStore.set` for tracking recent identical submissions
-- `comment.remove()` and `context.modLog.add()`
+- `comment.remove()` and `comment.addRemovalNote()` (`context.modLog` was removed from Devvit)
 
 Edge cases:
 - Legitimate promotional posts with multiple links: the configurable blocked-domain list prevents false positives on known-good domains.
